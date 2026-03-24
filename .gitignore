@@ -1,0 +1,6 @@
+old_versions/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+tmp/
