@@ -6,10 +6,14 @@
 (function () {
   'use strict';
 
-  // ── Constants ──
-  const STORAGE_KEY = 'oramed_app_state';
+  // ── Constants & Supabase ──
   const ROLE_KEY = 'oramed_app_role';
   const THEME_KEY = 'oramed_app_theme';
+
+  // SUPABASE CONFIGURATION
+  const supabaseUrl = 'https://qshgocqxbbcbmicakiqm.supabase.co';
+  const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFzaGdvY3F4YmJjYm1pY2FraXFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0NDk4MTQsImV4cCI6MjA5MDAyNTgxNH0.b1MqARHF86wJUoc_W7p7WFUWYvhWUqNPdh3m4lDA4jU';
+  const supabase = window.supabase ? window.supabase.createClient(supabaseUrl, supabaseKey) : null;
 
   // ── Utility ──
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -19,42 +23,84 @@
   function $(sel) { return document.querySelector(sel); }
   function $$(sel) { return document.querySelectorAll(sel); }
 
-  // ── Default State ──
-  function defaultState() {
-    return {
-      references: [],
-      clients: [],
-      receptions: [],
-      sorties: [],
-      archives: { receptions: [], sorties: [] },
-      settings: { brCounter: 1, bsCounter: 1 }
-    };
-  }
+  // ── State ──
+  var state = {
+    references: [],
+    clients: [],
+    receptions: [],
+    sorties: [],
+    archives: { receptions: [], sorties: [] },
+    settings: { brCounter: 1, bsCounter: 1 },
+    mouvements: []
+  };
 
-  // ── State persistence ──
-  function loadState() {
+  // ── Supabase State loading ──
+  async function loadState() {
+    if(!supabase) return;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return defaultState();
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return defaultState();
-      const def = defaultState();
-      // Merge with defaults to fill missing keys
-      for (const k of Object.keys(def)) {
-        if (!(k in parsed)) parsed[k] = def[k];
-      }
-      if (!parsed.archives) parsed.archives = { receptions: [], sorties: [] };
-      if (!parsed.archives.receptions) parsed.archives.receptions = [];
-      if (!parsed.archives.sorties) parsed.archives.sorties = [];
-      if (!parsed.settings) parsed.settings = { brCounter: 1, bsCounter: 1 };
-      return parsed;
-    } catch (_) {
-      return defaultState();
+      const { data: pData } = await supabase.from('produits').select('*');
+      const { data: cData } = await supabase.from('clients').select('*');
+      const { data: brData } = await supabase.from('bons_reception').select('*');
+      const { data: brlData } = await supabase.from('bons_reception_lignes').select('*');
+      const { data: bsData } = await supabase.from('bons_sortie').select('*');
+      const { data: bslData } = await supabase.from('bons_sortie_lignes').select('*');
+
+      state.references = (pData || []).map(p => ({
+        ...p,
+        m2ParCaisse: p.m2_par_caisse,
+        stockM2: p.stock_m2
+      }));
+
+      state.clients = cData || [];
+
+      const brLignes = brlData || [];
+      state.archives.receptions = (brData || []).map(br => {
+        br.lines = brLignes.filter(l => l.bon_id === br.id).map(l => ({
+          refId: l.produit_id,
+          caisses: l.caisses,
+          m2: l.m2
+        }));
+        br.number = br.number || br.numero || ('BR-' + br.id);
+        br.totalCaisses = br.total_caisses;
+        br.totalM2 = br.total_m2;
+        br.createdAt = br.created_at;
+        return br;
+      });
+
+      const bsLignes = bslData || [];
+      state.archives.sorties = (bsData || []).map(bs => {
+        bs.lines = bsLignes.filter(l => l.bon_id === bs.id).map(l => ({
+          refId: l.produit_id,
+          caisses: l.caisses,
+          m2: l.m2
+        }));
+        bs.number = bs.number || bs.numero || ('BS-' + bs.id);
+        bs.totalCaisses = bs.total_caisses;
+        bs.totalM2 = bs.total_m2;
+        bs.createdAt = bs.created_at;
+        bs.clientType = bs.client_type;
+        bs.clientNom = bs.client_nom;
+        
+        // Map legacy client name for archival view
+        if (bs.client_type === 'divers') {
+          bs.client = bs.client_nom;
+        } else {
+          const c = state.clients.find(c => c.id == bs.client_id);
+          bs.client = c ? c.nom : bs.client_id;
+        }
+        return bs;
+      });
+
+      state.settings.brCounter = state.archives.receptions.length + 1;
+      state.settings.bsCounter = state.archives.sorties.length + 1;
+
+    } catch (err) {
+      console.error('loadState Supabase error:', err);
     }
   }
 
   function saveState() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (_) { /* silent */ }
+    // No-op. We handle inserts granularly and await loadState()
   }
 
   // ── Toast ──
@@ -70,17 +116,70 @@
     }, 2800);
   }
 
-  // ── Role Logic ──
-  function resolveRole() {
-    var params = new URLSearchParams(window.location.search);
-    var urlRole = params.get('role');
-    if (urlRole === 'direction' || urlRole === 'operateur') {
-      localStorage.setItem(ROLE_KEY, urlRole);
-      return urlRole;
+  // ── Auth & Role Logic ──
+  let currentRole = null;
+  let authMode = 'login';
+
+  async function checkSession() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      $('#auth-overlay').hidden = false;
+      return;
     }
-    var stored = localStorage.getItem(ROLE_KEY);
-    if (stored === 'direction' || stored === 'operateur') return stored;
-    return 'direction';
+    
+    const role = await fetchUserRole(session.user.id);
+    if (!role || role === 'en_attente') {
+      $('#auth-overlay').hidden = false;
+      $('#auth-error').textContent = "Votre compte est en attente de validation par la direction";
+      $('#auth-error').hidden = false;
+      return;
+    }
+    
+    $('#auth-overlay').hidden = true;
+    currentRole = role;
+    await initAppData(role);
+  }
+
+  async function fetchUserRole(userId) {
+    const { data, error } = await supabase.from('utilisateurs').select('role').eq('id', userId).single();
+    if (error || !data) return null;
+    return data.role;
+  }
+
+  function initAuthUI() {
+    $('#auth-toggle-mode').addEventListener('click', function() {
+      authMode = authMode === 'login' ? 'signup' : 'login';
+      $('#auth-title').textContent = authMode === 'login' ? 'Connexion' : 'Créer un compte';
+      $('#auth-submit').textContent = authMode === 'login' ? 'Se connecter' : "S'inscrire";
+      this.textContent = authMode === 'login' ? 'Demander un accès' : 'Déjà un compte ? Connexion';
+      $('#auth-error').hidden = true;
+    });
+
+    $('#auth-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      var email = $('#auth-email').value;
+      var password = $('#auth-password').value;
+      $('#auth-error').hidden = true;
+      try {
+        if (authMode === 'login') {
+          const { error } = await supabase.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.auth.signUp({ email, password });
+          if (error) throw error;
+          toast('Compte créé, en attente de validation', 'info');
+        }
+        await checkSession();
+      } catch (err) {
+        $('#auth-error').textContent = err.message;
+        $('#auth-error').hidden = false;
+      }
+    });
+
+    $('#auth-logout').addEventListener('click', async function() {
+      await supabase.auth.signOut();
+      location.reload();
+    });
   }
 
   // ── Theme Logic ──
@@ -108,9 +207,11 @@
   function populateRefSelects() {
     var sels = [
       { el: '#br-line-ref', filter: null },
-      { el: '#bs-line-ref', filter: null }
+      { el: '#bs-line-ref', filter: null },
+      { el: '#dir-mvt-ref', filter: null }
     ];
     sels.forEach(function (s) {
+      if(!$(s.el)) return;
       var sel = $(s.el);
       sel.innerHTML = '<option value="">— Référence —</option>';
       state.references.forEach(function (r) {
@@ -126,7 +227,8 @@
     var sel = $('#bs-client');
     sel.innerHTML = '<option value="">— Sélectionner —</option>';
     state.clients.forEach(function (c) {
-      var o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o);
+      if (!c) return;
+      var o = document.createElement('option'); o.value = c.id; o.textContent = c.nom; sel.appendChild(o);
     });
   }
 
@@ -273,29 +375,61 @@
     // Nouveau
     $('#br-nouveau').addEventListener('click', function () { brReset(); toast('Nouveau bon de réception', 'info'); });
     // Valider
-    $('#br-valider').addEventListener('click', function () {
+    $('#br-valider').addEventListener('click', async function () {
       if (brDraft.lines.length === 0) { toast('Ajoutez au moins une ligne', 'error'); return; }
-      var reception = {
-        id: uid(),
-        number: brNextNumber(),
-        date: $('#br-date').value || today(),
+      if (!supabase) { toast('Supabase non configuré', 'error'); return; }
+      
+      var number = brNextNumber();
+      var date = $('#br-date').value || today();
+      var receptionData = {
+        numero: number,
+        date: date,
         bl: $('#br-bl').value,
         fournisseur: $('#br-fournisseur').value,
         transporteur: $('#br-transporteur').value,
         chauffeur: $('#br-chauffeur').value,
         matricule: $('#br-matricule').value,
-        lines: brDraft.lines.slice(),
-        totalCaisses: brDraft.lines.reduce(function (s, l) { return s + l.caisses; }, 0),
-        totalM2: round2(brDraft.lines.reduce(function (s, l) { return s + l.m2; }, 0)),
-        createdAt: new Date().toISOString()
+        total_caisses: brDraft.lines.reduce(function (s, l) { return s + l.caisses; }, 0),
+        total_m2: round2(brDraft.lines.reduce(function (s, l) { return s + l.m2; }, 0)),
+        created_at: new Date().toISOString()
       };
-      // Update stock
-      reception.lines.forEach(function (l) { addStock(l.refId, l.caisses); });
-      state.archives.receptions.push(reception);
-      state.settings.brCounter++;
-      saveState();
-      brReset();
-      toast('Réception validée : ' + reception.number, 'success');
+
+      try {
+        const { data: br, error: errBr } = await supabase.from('bons_reception').insert(receptionData).select().single();
+        if(errBr || !br) throw new Error(errBr ? errBr.message : 'Error insertion BR');
+
+        const lignesToInsert = brDraft.lines.map(l => ({
+          bon_id: br.id,
+          produit_id: l.refId,
+          caisses: l.caisses,
+          m2: l.m2
+        }));
+
+        await supabase.from('bons_reception_lignes').insert(lignesToInsert);
+
+        for (const l of brDraft.lines) {
+          const ref = refById(l.refId);
+          if (ref) {
+            const newStockM2 = round2((ref.stockM2 || 0) + l.m2);
+            await supabase.from('produits').update({ stock_m2: newStockM2 }).eq('id', l.refId);
+          }
+          await supabase.from('mouvements').insert({
+            date: date,
+            type: 'reception',
+            reference_id: l.refId,
+            quantity_m2: l.m2,
+            document_ref: br.numero || ('BR-' + br.id)
+          });
+        }
+
+        await loadState();
+        brReset();
+        toast('Réception validée : ' + (br.numero || 'BR-'+br.id), 'success');
+        refreshDropdowns();
+        if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
+      } catch (err) {
+        toast('Erreur de validation: ' + err.message, 'error');
+      }
     });
   }
 
@@ -358,6 +492,16 @@
 
   function initSortie() {
     bsReset();
+    document.querySelectorAll('[name="bs-client-type"]').forEach(r => r.addEventListener('change', function() {
+      if(this.value === 'compte') {
+          $('#group-bs-client-compte').hidden = false;
+          $('#group-bs-client-divers').hidden = true;
+      } else {
+          $('#group-bs-client-compte').hidden = true;
+          $('#group-bs-client-divers').hidden = false;
+      }
+    }));
+
     $('#bs-line-ref').addEventListener('change', function () {
       var refId = this.value;
       var sm2 = getStockM2(refId);
@@ -388,24 +532,67 @@
       renderBsLines();
     });
     $('#bs-nouveau').addEventListener('click', function () { bsReset(); toast('Nouveau bon de sortie', 'info'); });
-    $('#bs-valider').addEventListener('click', function () {
+    $('#bs-valider').addEventListener('click', async function () {
       if (bsDraft.lines.length === 0) { toast('Ajoutez au moins une ligne', 'error'); return; }
-      var sortie = {
-        id: uid(),
-        number: bsNextNumber(),
-        date: $('#bs-date').value || today(),
-        client: $('#bs-client').value,
-        lines: bsDraft.lines.slice(),
-        totalCaisses: bsDraft.lines.reduce(function (s, l) { return s + l.caisses; }, 0),
-        totalM2: round2(bsDraft.lines.reduce(function (s, l) { return s + l.m2; }, 0)),
-        createdAt: new Date().toISOString()
+      if (!supabase) { toast('Supabase non configuré', 'error'); return; }
+
+      var clientTypeElem = document.querySelector('[name="bs-client-type"]:checked');
+      var clientType = clientTypeElem ? clientTypeElem.value : 'compte';
+      var clientId = clientType === 'compte' ? $('#bs-client').value : null;
+      var clientNom = clientType === 'divers' ? $('#bs-client-divers-nom').value.trim() : null;
+
+      if(clientType === 'compte' && !clientId) { toast('Sélectionnez un client', 'error'); return; }
+      if(clientType === 'divers' && !clientNom) { toast('Saisissez le nom du client', 'error'); return; }
+
+      var number = bsNextNumber();
+      var date = $('#bs-date').value || today();
+      var sortieData = {
+        numero: number,
+        date: date,
+        client_type: clientType,
+        client_id: clientId || null,
+        client_nom: clientNom || null,
+        total_caisses: bsDraft.lines.reduce(function (s, l) { return s + l.caisses; }, 0),
+        total_m2: round2(bsDraft.lines.reduce(function (s, l) { return s + l.m2; }, 0)),
+        created_at: new Date().toISOString()
       };
-      sortie.lines.forEach(function (l) { removeStock(l.refId, l.caisses); });
-      state.archives.sorties.push(sortie);
-      state.settings.bsCounter++;
-      saveState();
-      bsReset();
-      toast('Sortie validée : ' + sortie.number, 'success');
+
+      try {
+        const { data: bs, error: errBs } = await supabase.from('bons_sortie').insert(sortieData).select().single();
+        if(errBs || !bs) throw new Error(errBs ? errBs.message : 'Error insertion BS');
+
+        const lignesToInsert = bsDraft.lines.map(l => ({
+          bon_id: bs.id,
+          produit_id: l.refId,
+          caisses: l.caisses,
+          m2: l.m2
+        }));
+
+        await supabase.from('bons_sortie_lignes').insert(lignesToInsert);
+
+        for (const l of bsDraft.lines) {
+          const ref = refById(l.refId);
+          if (ref) {
+            const newStockM2 = round2(Math.max(0, (ref.stockM2 || 0) - l.m2));
+            await supabase.from('produits').update({ stock_m2: newStockM2 }).eq('id', l.refId);
+          }
+          await supabase.from('mouvements').insert({
+            date: date,
+            type: 'sortie',
+            reference_id: l.refId,
+            quantity_m2: -l.m2,
+            document_ref: bs.numero || ('BS-' + bs.id)
+          });
+        }
+
+        await loadState();
+        bsReset();
+        toast('Sortie validée : ' + (bs.numero || 'BS-'+bs.id), 'success');
+        refreshDropdowns();
+        if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
+      } catch (err) {
+        toast('Erreur de validation BS: ' + err.message, 'error');
+      }
     });
   }
 
@@ -440,6 +627,7 @@
 
   function initStock() {
     $('#stock-search').addEventListener('input', function () { renderStock(this.value); });
+    $('#btn-print-stock').addEventListener('click', function () { window.print(); });
   }
 
   // ══════════════════════════════════════════════════
@@ -592,13 +780,16 @@
       body.appendChild(tr);
     });
     body.querySelectorAll('.btn--danger').forEach(function (btn) {
-      btn.addEventListener('click', function () {
+      btn.addEventListener('click', async function () {
         var id = btn.getAttribute('data-id');
-        state.references = state.references.filter(function (r) { return r.id !== id; });
-        saveState();
-        renderDirRefs($('#dir-ref-search').value);
-        refreshDropdowns();
-        toast('Référence supprimée', 'info');
+        if (!supabase) return;
+        try {
+          await supabase.from('produits').delete().eq('id', id);
+          await loadState();
+          renderDirRefs($('#dir-ref-search').value);
+          refreshDropdowns();
+          toast('Référence supprimée', 'info');
+        } catch(err) { toast('Erreur: ' + err.message, 'error'); }
       });
     });
   }
@@ -607,30 +798,84 @@
     var body = $('#dir-client-body');
     body.innerHTML = '';
     if (state.clients.length === 0) {
-      body.innerHTML = '<tr><td colspan="2" class="empty-state">Aucun client</td></tr>';
+      body.innerHTML = '<tr><td colspan="3" class="empty-state">Aucun client</td></tr>';
       return;
     }
-    state.clients.forEach(function (c, i) {
+    state.clients.forEach(function (c) {
       var tr = document.createElement('tr');
       tr.innerHTML =
-        '<td>' + c + '</td>' +
-        '<td><button class="btn btn--danger btn--sm" data-idx="' + i + '">Supprimer</button></td>';
+        '<td>' + c.nom + '</td>' +
+        '<td>' + (c.type || '—') + '</td>' +
+        '<td><button class="btn btn--danger btn--sm" data-id="' + c.id + '">Supprimer</button></td>';
       body.appendChild(tr);
     });
     body.querySelectorAll('.btn--danger').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        state.clients.splice(parseInt(btn.getAttribute('data-idx')), 1);
-        saveState();
-        renderDirClients();
-        populateClients();
-        toast('Client supprimé', 'info');
+      btn.addEventListener('click', async function () {
+        var id = btn.getAttribute('data-id');
+        if (!supabase) return;
+        try {
+          await supabase.from('clients').delete().eq('id', id);
+          await loadState();
+          renderDirClients();
+          populateClients();
+          toast('Client supprimé', 'info');
+        } catch(err) { toast('Erreur: ' + err.message, 'error'); }
       });
     });
   }
 
+  async function renderDirUsers() {
+    var body = $('#dir-users-body');
+    if (!body) return;
+    body.innerHTML = '<tr><td colspan="2">Chargement...</td></tr>';
+    try {
+      const { data: users, error } = await supabase.from('utilisateurs').select('*');
+      if (error) throw error;
+      body.innerHTML = '';
+      if (!users || users.length === 0) {
+        body.innerHTML = '<tr><td colspan="2" class="empty-state">Aucun utilisateur</td></tr>';
+        return;
+      }
+      users.forEach(u => {
+        var tr = document.createElement('tr');
+        var isWait = u.role === 'en_attente' ? 'selected' : '';
+        var isOp = u.role === 'operateur' ? 'selected' : '';
+        var isDir = u.role === 'direction' ? 'selected' : '';
+        tr.innerHTML = 
+          '<td>' + u.email + '</td>' +
+          '<td>' +
+             '<select class="input input-role" data-id="'+u.id+'">' +
+                '<option value="en_attente" '+isWait+'>En attente</option>' +
+                '<option value="operateur" '+isOp+'>Opérateur</option>' +
+                '<option value="direction" '+isDir+'>Direction</option>' +
+             '</select>' +
+          '</td>';
+        body.appendChild(tr);
+      });
+      
+      body.querySelectorAll('.input-role').forEach(function(sel) {
+        sel.addEventListener('change', async function() {
+          var userId = this.getAttribute('data-id');
+          var newRole = this.value;
+          try {
+            const { error: errUpd } = await supabase.from('utilisateurs').update({ role: newRole }).eq('id', userId);
+            if (errUpd) throw errUpd;
+            toast('Rôle mis à jour', 'success');
+          } catch(err) {
+            toast('Erreur: ' + err.message, 'error');
+            renderDirUsers(); // revert UI on failure
+          }
+        });
+      });
+    } catch(err) {
+      body.innerHTML = '<tr><td colspan="2" class="text-danger">Erreur: '+err.message+'</td></tr>';
+    }
+  }
+
   function initDirection() {
     $('#dir-ref-search').addEventListener('input', function () { renderDirRefs(this.value); });
-    $('#dir-ref-add').addEventListener('click', function () {
+    $('#dir-ref-add').addEventListener('click', async function () {
+      if(!supabase) return;
       var nom = $('#dir-ref-nom').value.trim();
       var fournisseur = $('#dir-ref-fournisseur').value;
       var format = $('#dir-ref-format').value.trim();
@@ -638,30 +883,68 @@
       if (!nom) { toast('Le nom est requis', 'error'); return; }
       if (!fournisseur) { toast('Sélectionnez un fournisseur', 'error'); return; }
       if (m2 <= 0) { toast('m²/caisse invalide', 'error'); return; }
-      // Duplicate check
       var dup = state.references.find(function (r) {
         return r.nom.toLowerCase() === nom.toLowerCase() && r.fournisseur === fournisseur && r.format === format;
       });
       if (dup) { toast('Cette référence existe déjà', 'error'); return; }
-      state.references.push({ id: uid(), nom: nom, fournisseur: fournisseur, format: format, m2ParCaisse: m2, stockM2: 0 });
-      saveState();
-      $('#dir-ref-nom').value = '';
-      $('#dir-ref-format').value = '';
-      $('#dir-ref-m2caisse').value = '';
-      renderDirRefs();
-      refreshDropdowns();
-      toast('Référence ajoutée : ' + nom, 'success');
+      try {
+        await supabase.from('produits').insert({ nom: nom, fournisseur: fournisseur, format: format, m2_par_caisse: m2, stock_m2: 0 });
+        await loadState();
+        $('#dir-ref-nom').value = '';
+        $('#dir-ref-format').value = '';
+        $('#dir-ref-m2caisse').value = '';
+        renderDirRefs();
+        refreshDropdowns();
+        toast('Référence ajoutée : ' + nom, 'success');
+      } catch(err) { toast('Erreur ajout: ' + err.message, 'error'); }
     });
-    $('#dir-client-add').addEventListener('click', function () {
+    $('#dir-client-add').addEventListener('click', async function () {
+      if(!supabase) return;
       var nom = $('#dir-client-nom').value.trim();
       if (!nom) { toast('Le nom du client est requis', 'error'); return; }
-      if (state.clients.indexOf(nom) >= 0) { toast('Ce client existe déjà', 'error'); return; }
-      state.clients.push(nom);
-      saveState();
-      $('#dir-client-nom').value = '';
-      renderDirClients();
-      populateClients();
-      toast('Client ajouté : ' + nom, 'success');
+      if (state.clients.find(c => c.nom.toLowerCase() === nom.toLowerCase())) { toast('Ce client existe déjà', 'error'); return; }
+      try {
+        await supabase.from('clients').insert({ nom: nom, type: 'compte' });
+        await loadState();
+        $('#dir-client-nom').value = '';
+        renderDirClients();
+        populateClients();
+        toast('Client ajouté : ' + nom, 'success');
+      } catch(err) { toast('Erreur ajout: ' + err.message, 'error'); }
+    });
+    
+    $('#dir-mvt-btn').addEventListener('click', async function() {
+      var refId = $('#dir-mvt-ref').value;
+      if(!refId) { toast('Sélectionnez une référence', 'error'); return; }
+      if(!supabase) return;
+      var body = $('#dir-mvt-body');
+      body.innerHTML = '<tr><td colspan="5">Chargement...</td></tr>';
+      try {
+        var { data: mvts } = await supabase.from('mouvements').select('*').eq('reference_id', refId).order('date', { ascending: false });
+        body.innerHTML = '';
+        if(!mvts || mvts.length === 0) {
+          body.innerHTML = '<tr><td colspan="5" class="empty-state">Aucun mouvement</td></tr>';
+          return;
+        }
+        var ref = refById(refId);
+        mvts.forEach(function(m) {
+          var caisses = ref && ref.m2ParCaisse ? round2(m.quantity_m2 / ref.m2ParCaisse) : '—';
+          // color red for sortie, green for reception
+          var style = m.type === 'sortie' ? 'color: var(--danger)' : 'color: var(--success)';
+          var typeLabel = m.type === 'sortie' ? 'Sortie' : 'Réception';
+          var sign = m.type === 'sortie' ? '-' : '+';
+          var tr = document.createElement('tr');
+          tr.innerHTML = 
+            '<td>' + m.date + '</td>' +
+            '<td>' + typeLabel + '</td>' +
+            '<td>' + (m.document_ref || '—') + '</td>' +
+            '<td style="' + style + '"><strong>' + sign + Math.abs(caisses) + '</strong></td>' +
+            '<td style="' + style + '"><strong>' + sign + round2(Math.abs(m.quantity_m2)) + '</strong></td>';
+          body.appendChild(tr);
+        });
+      } catch(e) {
+        toast('Erreur mvts: ' + e.message, 'error');
+      }
     });
   }
 
@@ -685,13 +968,20 @@
   // ══════════════════════════════════════════════════
   var state;
 
-  function boot() {
-    try {
-      // 1. Load state
-      state = loadState();
+  function showFatalError(err) {
+      var el = document.getElementById('fatal-error');
+      var msg = document.getElementById('fatal-error-msg');
+      if (el && msg) {
+        msg.textContent = err.message || 'Erreur inconnue';
+        el.hidden = false;
+      }
+      console.error('ORAMED boot error:', err);
+  }
 
-      // 2. Role
-      var role = resolveRole();
+  async function initAppData(role) {
+    try {
+      await loadState();
+
       var badge = $('#role-badge');
       badge.textContent = role;
       if (role === 'operateur') {
@@ -699,14 +989,12 @@
         $('#tab-direction').style.display = 'none';
       }
 
-      // 3. Theme
       applyTheme(resolveTheme());
       $('#theme-toggle').addEventListener('click', function () {
         var cur = document.documentElement.getAttribute('data-theme');
         applyTheme(cur === 'dark' ? 'light' : 'dark');
       });
 
-      // 4. Init modules
       refreshDropdowns();
       initTabs();
       initReception();
@@ -717,18 +1005,23 @@
       initDirection();
       initModal();
       initGlobalSearch();
-
-      // 5. Show first tab
-      switchTab('reception');
-
-    } catch (err) {
-      var el = document.getElementById('fatal-error');
-      var msg = document.getElementById('fatal-error-msg');
-      if (el && msg) {
-        msg.textContent = err.message || 'Erreur inconnue';
-        el.hidden = false;
+      
+      if (role !== 'operateur') {
+         renderDirUsers();
       }
-      console.error('ORAMED boot error:', err);
+
+      switchTab('reception');
+    } catch(err) {
+      showFatalError(err);
+    }
+  }
+
+  async function boot() {
+    try {
+      initAuthUI();
+      await checkSession();
+    } catch (err) {
+      showFatalError(err);
     }
   }
 
