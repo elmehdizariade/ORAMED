@@ -784,7 +784,8 @@
         var id = btn.getAttribute('data-id');
         if (!supabase) return;
         try {
-          await supabase.from('produits').delete().eq('id', id);
+          const { error } = await supabase.from('produits').delete().eq('id', id);
+          if (error) throw error;
           await loadState();
           renderDirRefs($('#dir-ref-search').value);
           refreshDropdowns();
@@ -814,7 +815,8 @@
         var id = btn.getAttribute('data-id');
         if (!supabase) return;
         try {
-          await supabase.from('clients').delete().eq('id', id);
+          const { error } = await supabase.from('clients').delete().eq('id', id);
+          if (error) throw error;
           await loadState();
           renderDirClients();
           populateClients();
@@ -888,7 +890,8 @@
       });
       if (dup) { toast('Cette référence existe déjà', 'error'); return; }
       try {
-        await supabase.from('produits').insert({ nom: nom, fournisseur: fournisseur, format: format, m2_par_caisse: m2, stock_m2: 0 });
+        const { error } = await supabase.from('produits').insert({ nom: nom, fournisseur: fournisseur, format: format, m2_par_caisse: m2, stock_m2: 0 });
+        if (error) throw error;
         await loadState();
         $('#dir-ref-nom').value = '';
         $('#dir-ref-format').value = '';
@@ -904,7 +907,8 @@
       if (!nom) { toast('Le nom du client est requis', 'error'); return; }
       if (state.clients.find(c => c.nom.toLowerCase() === nom.toLowerCase())) { toast('Ce client existe déjà', 'error'); return; }
       try {
-        await supabase.from('clients').insert({ nom: nom, type: 'compte' });
+        const { error } = await supabase.from('clients').insert({ nom: nom, type: 'compte' });
+        if (error) throw error;
         await loadState();
         $('#dir-client-nom').value = '';
         renderDirClients();
