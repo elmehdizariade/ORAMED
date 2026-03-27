@@ -258,3 +258,11 @@ select.input{cursor:pointer;appearance:none;background-image:url("data:image/svg
   .table th, .table td { border: 1px solid #000; color: #000; padding: 8px; }
   .table th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* TOM SELECT DARK THEME */
+.ts-control { background: var(--bg-input); border: 1px solid var(--border); color: var(--text-primary); border-radius: var(--radius-sm); padding: 9px 14px; }
+.ts-control > input { color: var(--text-primary); }
+.ts-dropdown { background: var(--bg-input); border: 1px solid var(--border); color: var(--text-primary); border-radius: var(--radius-sm); }
+.ts-dropdown .option { padding: 8px 14px; }
+.ts-dropdown .option:hover, .ts-dropdown .option.active { background: var(--bg-card-hover); color: var(--accent-hover); }
+.ts-control.focus { border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--accent-glow); }
