@@ -80,7 +80,7 @@ select.input{cursor:pointer;appearance:none;background-image:url("data:image/svg
 .summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px;margin-top:8px}
 .summary-card{display:flex;align-items:center;gap:16px;padding:22px 24px;border-radius:var(--radius-lg);background:var(--bg-card);border:1px solid var(--border);box-shadow:var(--shadow-sm);transition:all var(--tr)}
 .summary-card:hover{transform:translateY(-3px);box-shadow:var(--shadow)}
-.summary-card__icon{font-size:2rem}
+.summary-card__icon{font-size:2.5rem;color:var(--text-primary);opacity:0.9}
 .summary-card__value{display:block;font-size:1.6rem;font-weight:800}
 .summary-card__label{display:block;font-size:.78rem;color:var(--text-muted)}
 .summary-card--in{border-left:3px solid var(--success)}
