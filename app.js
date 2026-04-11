@@ -334,6 +334,17 @@
     renderBrLines();
   }
 
+  // ── Lock/unlock header fields when lines exist ──
+  function toggleHeaderLock(isLocked) {
+    $('#br-date').disabled = isLocked;
+    $('#br-bl').disabled = isLocked;
+    $('#br-fournisseur').disabled = isLocked;
+    $('#br-transporteur').disabled = isLocked;
+    $('#br-chauffeur').disabled = isLocked;
+    $('#br-chauffeur-select').disabled = isLocked;
+    $('#br-matricule').disabled = isLocked;
+  }
+
   function brNextNumber() {
     return 'BR-' + padNum(state.settings.brCounter, 4);
   }
@@ -398,6 +409,8 @@
         editLine(parseInt(btn.getAttribute('data-idx')));
       });
     });
+    // Lock/unlock header based on line count
+    toggleHeaderLock(brDraft.lines.length > 0);
   }
 
   // ── Transporteurs Fleet Data ──
@@ -501,6 +514,9 @@
       var caisses = parseInt($('#br-line-caisses').value) || 0;
       if (!ref) { toast('Sélectionnez une référence', 'error'); return; }
       if (caisses <= 0) { toast('Nombre de caisses invalide', 'error'); return; }
+      // Prevent duplicate references
+      var duplicate = brDraft.lines.some(function (l) { return l.refId === refId; });
+      if (duplicate) { alert('Cette référence a déjà été ajoutée. Veuillez modifier la ligne existante.'); return; }
       brDraft.lines.push({ refId: refId, caisses: caisses, m2: round2(caisses * ref.m2ParCaisse) });
       saveBrDraft();
       $('#br-line-ref').value = '';
