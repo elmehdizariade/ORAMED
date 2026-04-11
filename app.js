@@ -311,6 +311,29 @@
   // ══════════════════════════════════════════════════
   var brDraft = { lines: [] };
 
+  function saveBrDraft() {
+    localStorage.setItem('draft_reception_lines', JSON.stringify(brDraft.lines));
+  }
+
+  function loadBrDraft() {
+    try {
+      var saved = localStorage.getItem('draft_reception_lines');
+      if (saved) brDraft.lines = JSON.parse(saved);
+    } catch (e) {
+      console.error("Erreur chargement brouillon", e);
+    }
+  }
+
+  function editLine(idx) {
+    var line = brDraft.lines[idx];
+    $('#br-line-ref').value = line.refId;
+    $('#br-line-caisses').value = line.caisses;
+    $('#br-line-caisses').dispatchEvent(new Event('input'));
+    brDraft.lines.splice(idx, 1);
+    saveBrDraft();
+    renderBrLines();
+  }
+
   function brNextNumber() {
     return 'BR-' + padNum(state.settings.brCounter, 4);
   }
@@ -351,7 +374,10 @@
           '<td>' + (ref ? ref.format : '') + '</td>' +
           '<td>' + line.caisses + '</td>' +
           '<td>' + round2(line.m2) + '</td>' +
-          '<td><button class="btn btn--danger btn--sm" data-idx="' + i + '">✕</button></td>';
+          '<td>' +
+          '<button class="btn btn--primary btn--sm btn--edit" data-idx="' + i + '" style="margin-right: 4px;">Modifier</button>' +
+          '<button class="btn btn--danger btn--sm btn--delete" data-idx="' + i + '">✕</button>' +
+          '</td>';
         body.appendChild(tr);
         tCaisses += line.caisses;
         tM2 += line.m2;
@@ -359,11 +385,17 @@
     }
     $('#br-total-caisses').innerHTML = '<strong>' + tCaisses + '</strong>';
     $('#br-total-m2').innerHTML = '<strong>' + round2(tM2) + '</strong>';
-    // Bind delete buttons
-    body.querySelectorAll('.btn--danger').forEach(function (btn) {
+    // Bind buttons
+    body.querySelectorAll('.btn--delete').forEach(function (btn) {
       btn.addEventListener('click', function () {
         brDraft.lines.splice(parseInt(btn.getAttribute('data-idx')), 1);
+        saveBrDraft();
         renderBrLines();
+      });
+    });
+    body.querySelectorAll('.btn--edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        editLine(parseInt(btn.getAttribute('data-idx')));
       });
     });
   }
@@ -389,6 +421,8 @@
 
   function initReception() {
     brReset();
+    loadBrDraft();
+    renderBrLines();
 
     // ── Transporteur → Chauffeur → Matricule cascade ──
     $('#br-transporteur').addEventListener('change', function () {
@@ -468,13 +502,18 @@
       if (!ref) { toast('Sélectionnez une référence', 'error'); return; }
       if (caisses <= 0) { toast('Nombre de caisses invalide', 'error'); return; }
       brDraft.lines.push({ refId: refId, caisses: caisses, m2: round2(caisses * ref.m2ParCaisse) });
+      saveBrDraft();
       $('#br-line-ref').value = '';
       $('#br-line-caisses').value = '';
       $('#br-line-m2').value = '';
       renderBrLines();
     });
     // Nouveau
-    $('#br-nouveau').addEventListener('click', function () { brReset(); toast('Nouveau bon de réception', 'info'); });
+    $('#br-nouveau').addEventListener('click', function () { 
+      localStorage.removeItem('draft_reception_lines');
+      brReset(); 
+      toast('Nouveau bon de réception', 'info'); 
+    });
     // Valider
     $('#br-valider').addEventListener('click', async function () {
       if (brDraft.lines.length === 0) { toast('Ajoutez au moins une ligne', 'error'); return; }
@@ -524,6 +563,7 @@
         }
 
         await loadState();
+        localStorage.removeItem('draft_reception_lines');
         brReset();
         toast('Réception validée : ' + (br.numero || 'BR-'+br.id), 'success');
         refreshDropdowns();
