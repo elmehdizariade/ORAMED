@@ -107,11 +107,19 @@
           </div>
           <div class="form-group">
             <label for="br-transporteur">Transporteur</label>
-            <input type="text" id="br-transporteur" class="input" placeholder="Transporteur">
+            <select id="br-transporteur" class="input">
+              <option value="">— Sélectionner —</option>
+              <option value="Usine">Usine</option>
+              <option value="ORABTRANS">ORABTRANS</option>
+              <option value="LONGO CERAME">LONGO CERAME</option>
+            </select>
           </div>
           <div class="form-group">
             <label for="br-chauffeur">Chauffeur</label>
             <input type="text" id="br-chauffeur" class="input" placeholder="Nom du chauffeur">
+            <select id="br-chauffeur-select" class="input" style="display: none;">
+              <option value="">— Sélectionner —</option>
+            </select>
           </div>
           <div class="form-group">
             <label for="br-matricule">Matricule</label>

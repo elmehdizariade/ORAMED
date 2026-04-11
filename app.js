@@ -302,7 +302,11 @@
     $('#br-fournisseur').value = '';
     $('#br-transporteur').value = '';
     $('#br-chauffeur').value = '';
+    $('#br-chauffeur').style.display = '';
+    $('#br-chauffeur-select').style.display = 'none';
+    $('#br-chauffeur-select').innerHTML = '<option value="">— Sélectionner —</option>';
     $('#br-matricule').value = '';
+    $('#br-matricule').readOnly = false;
     $('#br-line-ref').value = '';
     $('#br-line-caisses').value = '';
     $('#br-line-m2').value = '';
@@ -343,8 +347,74 @@
     });
   }
 
+  // ── Transporteurs Fleet Data ──
+  const TRANSPORTEURS_DATA = {
+    "ORABTRANS": {
+      "Nacer": "24531-A-54",
+      "Abdlkhalek": "24532-A-54",
+      "Abdlah": "24533-A-54"
+    },
+    "LONGO CERAME": {
+      "Adil": "51762-A-72",
+      "Munir": "51761-A-72",
+      "Said": "21981-A-9",
+      "Hamza": "21982-A-9",
+      "Mustafa": "21980-A-9",
+      "Mohemad": "148-A-73",
+      "Mjid": "21983-a-9",
+      "Kamal": "21984-A-9"
+    }
+  };
+
   function initReception() {
     brReset();
+
+    // ── Transporteur → Chauffeur → Matricule cascade ──
+    $('#br-transporteur').addEventListener('change', function () {
+      var transporteur = this.value;
+      var chauffeurInput = $('#br-chauffeur');
+      var chauffeurSelect = $('#br-chauffeur-select');
+      var matriculeInput = $('#br-matricule');
+
+      if (TRANSPORTEURS_DATA[transporteur]) {
+        // Known transporter: show driver select, hide manual input
+        chauffeurInput.style.display = 'none';
+        chauffeurInput.value = '';
+        chauffeurSelect.style.display = '';
+        chauffeurSelect.innerHTML = '<option value="">— Sélectionner —</option>';
+        var drivers = TRANSPORTEURS_DATA[transporteur];
+        Object.keys(drivers).forEach(function (name) {
+          var opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          chauffeurSelect.appendChild(opt);
+        });
+        // Clear and lock matricule until a driver is picked
+        matriculeInput.value = '';
+        matriculeInput.readOnly = true;
+      } else {
+        // "Usine" or unknown: show manual input, hide driver select
+        chauffeurInput.style.display = '';
+        chauffeurSelect.style.display = 'none';
+        chauffeurSelect.innerHTML = '<option value="">— Sélectionner —</option>';
+        matriculeInput.value = '';
+        matriculeInput.readOnly = false;
+      }
+    });
+
+    $('#br-chauffeur-select').addEventListener('change', function () {
+      var transporteur = $('#br-transporteur').value;
+      var driverName = this.value;
+      var matriculeInput = $('#br-matricule');
+      if (TRANSPORTEURS_DATA[transporteur] && TRANSPORTEURS_DATA[transporteur][driverName]) {
+        matriculeInput.value = TRANSPORTEURS_DATA[transporteur][driverName];
+        matriculeInput.readOnly = true;
+      } else {
+        matriculeInput.value = '';
+        matriculeInput.readOnly = true;
+      }
+    });
+
     // Auto-calc m²
     $('#br-line-caisses').addEventListener('input', function () {
       var refId = $('#br-line-ref').value;
@@ -387,7 +457,7 @@
         bl: $('#br-bl').value,
         fournisseur: $('#br-fournisseur').value,
         transporteur: $('#br-transporteur').value,
-        chauffeur: $('#br-chauffeur').value,
+        chauffeur: $('#br-chauffeur').style.display !== 'none' ? $('#br-chauffeur').value : $('#br-chauffeur-select').value,
         matricule: $('#br-matricule').value,
         total_caisses: brDraft.lines.reduce(function (s, l) { return s + l.caisses; }, 0),
         total_m2: round2(brDraft.lines.reduce(function (s, l) { return s + l.m2; }, 0)),
