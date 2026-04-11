@@ -194,19 +194,39 @@
   }
 
   // ── Populate dropdowns ──
+
+  // Fournisseur → marque mapping for cascading reference filter
+  var FOURNISSEUR_MARQUE_MAP = {
+    "SCC": "Super Cerame",
+    "SCB": "Super Cerame",
+    "SCK": "Super Cerame",
+    "SCT": "Super Cerame",
+    "Facemag": "Facemag",
+    "Multicerame": "Multicerame"
+  };
+
   function populateFournisseurs() {
-    var sel = $('#br-fournisseur');
-    sel.innerHTML = '<option value="">— Sélectionner —</option>';
-    var fSet = new Set(state.references.map(function (r) { return r.fournisseur; }));
-    fSet.forEach(function (f) {
-      if (!f) return;
-      var o = document.createElement('option'); o.value = f; o.textContent = f; sel.appendChild(o);
+    // Fournisseur select is now hardcoded in HTML with optgroups — no-op
+  }
+
+  // Populate #br-line-ref filtered by marque
+  function populateBrRefs(marque) {
+    var sel = $('#br-line-ref');
+    sel.innerHTML = '<option value="">— Référence —</option>';
+    if (!marque) { sel.disabled = true; return; }
+    var filtered = state.references.filter(function (r) { return r.fournisseur === marque; });
+    filtered.forEach(function (r) {
+      var o = document.createElement('option');
+      o.value = r.id;
+      o.textContent = r.nom + ' (' + r.fournisseur + ' · ' + r.format + ')';
+      sel.appendChild(o);
     });
+    sel.disabled = false;
   }
 
   function populateRefSelects() {
+    // Only populate non-cascaded ref selects (sortie + direction)
     var sels = [
-      { el: '#br-line-ref', filter: null },
       { el: '#bs-line-ref', filter: null },
       { el: '#dir-mvt-ref', filter: null }
     ];
@@ -307,7 +327,8 @@
     $('#br-chauffeur-select').innerHTML = '<option value="">— Sélectionner —</option>';
     $('#br-matricule').value = '';
     $('#br-matricule').readOnly = false;
-    $('#br-line-ref').value = '';
+    $('#br-line-ref').innerHTML = '<option value="">— Référence —</option>';
+    $('#br-line-ref').disabled = true;
     $('#br-line-caisses').value = '';
     $('#br-line-m2').value = '';
     $('#br-number').textContent = brNextNumber();
@@ -413,6 +434,16 @@
         matriculeInput.value = '';
         matriculeInput.readOnly = true;
       }
+    });
+
+    // ── Fournisseur → Référence cascade ──
+    $('#br-fournisseur').addEventListener('change', function () {
+      var fournisseurVal = this.value;
+      var marque = FOURNISSEUR_MARQUE_MAP[fournisseurVal] || null;
+      populateBrRefs(marque);
+      // Reset dependent fields
+      $('#br-line-caisses').value = '';
+      $('#br-line-m2').value = '';
     });
 
     // Auto-calc m²
