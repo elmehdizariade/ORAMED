@@ -812,6 +812,8 @@
         }, 100);
 
       } catch (err) {
+        console.error('[ORAMED State Error] Échec critique lors de la validation Réception:', err);
+        alert('Erreur système durant la validation: ' + err.message);
         toast('Erreur de validation: ' + err.message, 'error');
       }
     });
@@ -987,6 +989,8 @@
         }, 100);
 
       } catch (err) {
+        console.error('[ORAMED State Error] Échec critique lors de la validation Sortie:', err);
+        alert('Erreur système durant la validation BS: ' + err.message);
         toast('Erreur de validation BS: ' + err.message, 'error');
       }
     });
