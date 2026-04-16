@@ -205,29 +205,157 @@
     "Multicerame": "Multicerame"
   };
 
-  function populateFournisseurs() {
-    // Fournisseur select is now hardcoded in HTML with optgroups — no-op
+  // ── Autocomplete Logic ──
+  async function fetchReferences(query, filters = {}) {
+    let results = state.references;
+    if (filters.marque) {
+      results = results.filter(r => r.fournisseur === filters.marque);
+    }
+    
+    query = (query || '').toLowerCase().trim();
+    if (!query) return results.slice(0, 20);
+
+    results = results.filter(r => {
+      return (r.id+'').toLowerCase().includes(query) ||
+             r.nom.toLowerCase().includes(query) ||
+             (r.fournisseur || '').toLowerCase().includes(query);
+    });
+    return results.slice(0, 20);
   }
 
-  // Populate #br-line-ref filtered by marque
-  function populateBrRefs(marque) {
-    var sel = $('#br-line-ref');
-    sel.innerHTML = '<option value="">— Référence —</option>';
-    if (!marque) { sel.disabled = true; return; }
-    var filtered = state.references.filter(function (r) { return r.fournisseur === marque; });
-    filtered.forEach(function (r) {
-      var o = document.createElement('option');
-      o.value = r.id;
-      o.textContent = r.nom + ' (' + r.fournisseur + ' · ' + r.format + ')';
-      sel.appendChild(o);
+  function setupAutocomplete(searchInputId, hiddenInputId, listId, isReception) {
+    const searchInput = $(searchInputId);
+    const hiddenInput = $(hiddenInputId);
+    const listEl = $(listId);
+    if (!searchInput || !hiddenInput || !listEl) return;
+    
+    let activeIndex = -1;
+    let currentResults = [];
+
+    async function handleSearch() {
+      const query = searchInput.value;
+      let filters = {};
+      
+      if (isReception) {
+         const fournisseurVal = $('#br-fournisseur').value;
+         const marque = FOURNISSEUR_MARQUE_MAP[fournisseurVal] || null;
+         if (!marque) {
+            listEl.hidden = true;
+            return;
+         }
+         filters.marque = marque;
+      }
+      
+      const results = await fetchReferences(query, filters);
+      currentResults = results;
+      renderList(results, query);
+    }
+
+    function renderList(results, query) {
+      listEl.innerHTML = '';
+      activeIndex = -1;
+      
+      if (results.length === 0) {
+        listEl.innerHTML = '<div class="autocomplete-empty">Aucun résultat trouvé</div>';
+        listEl.hidden = false;
+        return;
+      }
+
+      results.forEach((r, idx) => {
+        const item = document.createElement('div');
+        item.className = 'autocomplete-item';
+        
+        let displayStr = `${r.nom} (${r.fournisseur} · ${r.format})`;
+
+        if (query) {
+           const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\\\]/g, '\\\\$&')})`, 'gi');
+           displayStr = displayStr.replace(regex, '<span class="highlight">$1</span>');
+        }
+
+        if (!isReception) {
+           const stockM2 = r.stockM2 || 0;
+           if (stockM2 <= 0) {
+              displayStr += ` <span style="color:var(--danger);font-size:0.75rem;margin-left:8px">(Rupture: ${stockM2} m²)</span>`;
+           } else if (stockM2 < 20) {
+              displayStr += ` <span style="color:var(--warning);font-size:0.75rem;margin-left:8px">(Stock faible: ${stockM2} m²)</span>`;
+           } else {
+              displayStr += ` <span style="color:var(--text-muted);font-size:0.75rem;margin-left:8px">(Stock: ${stockM2} m²)</span>`;
+           }
+        }
+        
+        item.innerHTML = displayStr;
+        item.dataset.index = idx;
+        
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          selectItem(r);
+        });
+        
+        listEl.appendChild(item);
+      });
+      listEl.hidden = false;
+    }
+
+    function selectItem(ref) {
+      searchInput.value = `${ref.nom} (${ref.fournisseur} · ${ref.format})`;
+      hiddenInput.value = ref.id;
+      listEl.hidden = true;
+      hiddenInput.dispatchEvent(new Event('change'));
+    }
+
+    searchInput.addEventListener('input', () => {
+      hiddenInput.value = ''; // clear hidden value if user types
+      handleSearch();
     });
-    sel.disabled = false;
+    searchInput.addEventListener('focus', handleSearch);
+    searchInput.addEventListener('blur', () => { setTimeout(() => listEl.hidden = true, 150); });
+
+    searchInput.addEventListener('keydown', (e) => {
+      const items = listEl.querySelectorAll('.autocomplete-item');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activeIndex = (activeIndex + 1) % items.length;
+        updateActive(items);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeIndex = (activeIndex - 1 + items.length) % items.length;
+        updateActive(items);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeIndex > -1 && currentResults[activeIndex]) {
+          selectItem(currentResults[activeIndex]);
+        }
+      } else if (e.key === 'Escape') {
+        listEl.hidden = true;
+        searchInput.blur();
+      }
+    });
+
+    function updateActive(items) {
+      items.forEach((item, idx) => {
+        if (idx === activeIndex) {
+          item.classList.add('active');
+          item.scrollIntoView({ block: 'nearest' });
+        } else {
+          item.classList.remove('active');
+        }
+      });
+    }
+  }
+
+  function populateFournisseurs() {
+  }
+
+  function populateBrRefs(marque) {
+    if ($('#br-line-ref-search')) {
+      $('#br-line-ref').value = '';
+      $('#br-line-ref-search').value = '';
+      $('#br-line-ref-search').disabled = !marque;
+    }
   }
 
   function populateRefSelects() {
-    // Only populate non-cascaded ref selects (sortie + direction)
     var sels = [
-      { el: '#bs-line-ref', filter: null },
       { el: '#dir-mvt-ref', filter: null }
     ];
     sels.forEach(function (s) {
@@ -327,6 +455,10 @@
   function editLine(idx) {
     var line = brDraft.lines[idx];
     $('#br-line-ref').value = line.refId;
+    var ref = refById(line.refId);
+    if (ref && $('#br-line-ref-search')) {
+      $('#br-line-ref-search').value = `${ref.nom} (${ref.fournisseur} · ${ref.format})`;
+    }
     $('#br-line-caisses').value = line.caisses;
     $('#br-line-caisses').dispatchEvent(new Event('input'));
     brDraft.lines.splice(idx, 1);
@@ -361,8 +493,11 @@
     $('#br-chauffeur-select').innerHTML = '<option value="">— Sélectionner —</option>';
     $('#br-matricule').value = '';
     $('#br-matricule').readOnly = false;
-    $('#br-line-ref').innerHTML = '<option value="">— Référence —</option>';
-    $('#br-line-ref').disabled = true;
+    $('#br-line-ref').value = '';
+    if ($('#br-line-ref-search')) {
+      $('#br-line-ref-search').value = '';
+      $('#br-line-ref-search').disabled = true;
+    }
     $('#br-line-caisses').value = '';
     $('#br-line-m2').value = '';
     $('#br-number').textContent = brNextNumber();
@@ -436,6 +571,7 @@
     brReset();
     loadBrDraft();
     renderBrLines();
+    setupAutocomplete('#br-line-ref-search', '#br-line-ref', '#br-autocomplete-list', true);
 
     // ── Transporteur → Chauffeur → Matricule cascade ──
     $('#br-transporteur').addEventListener('change', function () {
@@ -520,6 +656,7 @@
       brDraft.lines.push({ refId: refId, caisses: caisses, m2: round2(caisses * ref.m2ParCaisse) });
       saveBrDraft();
       $('#br-line-ref').value = '';
+      if ($('#br-line-ref-search')) $('#br-line-ref-search').value = '';
       $('#br-line-caisses').value = '';
       $('#br-line-m2').value = '';
       renderBrLines();
@@ -604,6 +741,7 @@
     $('#bs-date').value = today();
     $('#bs-client').value = '';
     $('#bs-line-ref').value = '';
+    if ($('#bs-line-ref-search')) $('#bs-line-ref-search').value = '';
     $('#bs-line-caisses').value = '';
     $('#bs-line-m2').value = '';
     $('#bs-line-stock').value = '';
@@ -649,6 +787,7 @@
 
   function initSortie() {
     bsReset();
+    setupAutocomplete('#bs-line-ref-search', '#bs-line-ref', '#bs-autocomplete-list', false);
     document.querySelectorAll('[name="bs-client-type"]').forEach(r => r.addEventListener('change', function() {
       if(this.value === 'compte') {
           $('#group-bs-client-compte').hidden = false;
@@ -683,6 +822,7 @@
       if (caisses <= 0) { toast('Nombre de caisses invalide', 'error'); return; }
       bsDraft.lines.push({ refId: refId, caisses: caisses, m2: round2(caisses * ref.m2ParCaisse) });
       $('#bs-line-ref').value = '';
+      if ($('#bs-line-ref-search')) $('#bs-line-ref-search').value = '';
       $('#bs-line-caisses').value = '';
       $('#bs-line-m2').value = '';
       $('#bs-line-stock').value = '';
