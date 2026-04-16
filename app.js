@@ -1099,18 +1099,148 @@
         '<td>' + (it.tiers || '—') + '</td>' +
         '<td>' + it.lines + '</td>' +
         '<td>' + round2(it.totalM2) + '</td>' +
-        '<td><button class="btn btn--outline btn--sm" data-id="' + it.data.id + '" data-doc="' + it.docType + '">Voir</button></td>';
+        '<td>' +
+        '<button class="btn-icon btn-action-print" title="Imprimer" data-id="' + it.data.id + '" data-doc="' + it.docType + '">🖨️</button> ' +
+        '<button class="btn-icon btn-action-edit" title="Modifier" data-id="' + it.data.id + '" data-doc="' + it.docType + '">✏️</button> ' +
+        '<button class="btn-icon btn-action-delete" title="Annuler" data-id="' + it.data.id + '" data-doc="' + it.docType + '" style="color:var(--danger)">🗑️</button>' +
+        '</td>';
       body.appendChild(tr);
     });
-    body.querySelectorAll('.btn--outline').forEach(function (btn) {
+    
+    // Bind Action buttons
+    body.querySelectorAll('.btn-action-print').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var docType = btn.getAttribute('data-doc');
         var docId = btn.getAttribute('data-id');
-        var arr = docType === 'reception' ? state.archives.receptions : state.archives.sorties;
-        var doc = arr.find(function (d) { return d.id === docId; });
-        if (doc) openDetailModal(doc, docType);
+        printArchive(docId, docType);
       });
     });
+    body.querySelectorAll('.btn-action-edit').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var docType = btn.getAttribute('data-doc');
+        var docId = btn.getAttribute('data-id');
+        editArchive(docId, docType);
+      });
+    });
+    body.querySelectorAll('.btn-action-delete').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var docType = btn.getAttribute('data-doc');
+        var docId = btn.getAttribute('data-id');
+        annulerArchive(docId, docType);
+      });
+    });
+  }
+
+  function printArchive(docId, docType) {
+    var arr = docType === 'reception' ? state.archives.receptions : state.archives.sorties;
+    var doc = arr.find(function (d) { return d.id == docId; });
+    if (!doc) return;
+    
+    var bonData = {
+        numero: doc.number,
+        date: doc.date,
+        fournisseur: doc.fournisseur,
+        bl: doc.bl,
+        transporteur: doc.transporteur,
+        chauffeur: doc.chauffeur,
+        matricule: doc.matricule,
+        client_type: doc.clientType,
+        client_id: doc.client_id,
+        client_nom: doc.clientNom,
+        total_caisses: doc.totalCaisses,
+        total_m2: doc.totalM2
+    };
+    var linesData = doc.lines.map(function(l) {
+        return { produit_id: l.refId, caisses: l.caisses, m2: l.m2 };
+    });
+    
+    setTimeout(() => {
+        generatePrintLayout(bonData, linesData, docType);
+        document.body.classList.add('printing-bon');
+        window.print();
+        document.body.classList.remove('printing-bon');
+    }, 100);
+  }
+
+  function editArchive(docId, docType) {
+    if (!confirm('Voulez-vous modifier cette archive ? Cela remplacera le brouillon actuel.')) return;
+    var arr = docType === 'reception' ? state.archives.receptions : state.archives.sorties;
+    var doc = arr.find(function (d) { return d.id == docId; });
+    if (!doc) return;
+    
+    if (docType === 'reception') {
+      brDraft.lines = doc.lines.map(l => ({ refId: l.refId, caisses: l.caisses, m2: l.m2 }));
+      saveBrDraft();
+      $('#br-date').value = doc.date;
+      $('#br-bl').value = doc.bl || '';
+      $('#br-fournisseur').value = doc.fournisseur || '';
+      $('#br-transporteur').value = doc.transporteur || '';
+      if ($('#br-matricule')) $('#br-matricule').value = doc.matricule || '';
+      renderBrLines();
+      $('.tab-nav button[data-target="reception"]').click();
+    } else {
+      bsDraft.lines = doc.lines.map(l => ({ refId: l.refId, caisses: l.caisses, m2: l.m2 }));
+      $('#bs-date').value = doc.date;
+      if (doc.clientType) {
+        let typeInputs = document.querySelectorAll('[name="bs-client-type"]');
+        typeInputs.forEach(r => r.checked = (r.value === doc.clientType));
+        if (doc.clientType === 'compte') {
+          $('#bs-client').value = doc.client_id || '';
+          $('#group-bs-client-compte').hidden = false;
+          $('#group-bs-client-divers').hidden = true;
+        } else {
+          $('#bs-client-divers-nom').value = doc.clientNom || '';
+          $('#group-bs-client-compte').hidden = true;
+          $('#group-bs-client-divers').hidden = false;
+        }
+      }
+      renderBsLines();
+      $('.tab-nav button[data-target="sortie"]').click();
+    }
+  }
+
+  async function annulerArchive(docId, docType) {
+    if (!confirm('Attention ! Voulez-vous vraiment annuler ce document ? Le stock sera mis à jour en conséquence.')) return;
+    try {
+      var arr = docType === 'reception' ? state.archives.receptions : state.archives.sorties;
+      var doc = arr.find(function (d) { return d.id == docId; });
+      if (!doc) return;
+
+      if ((doc.number || '').includes('Annulé')) {
+        toast('Ce document est déjà annulé', 'warning');
+        return;
+      }
+      
+      const isReception = docType === 'reception';
+      const tableName = isReception ? 'bons_reception' : 'bons_sortie';
+      
+      // Update stock
+      for (const l of doc.lines) {
+        const ref = refById(l.refId);
+        if (ref) {
+          const changeM2 = isReception ? -l.m2 : l.m2;
+          const newStock = round2((ref.stockM2 || 0) + changeM2);
+          await supabase.from('produits').update({ stock_m2: newStock }).eq('id', l.refId);
+        }
+        await supabase.from('mouvements').insert({
+          date: today(),
+          type: isReception ? 'annulation_reception' : 'annulation_sortie',
+          reference_id: l.refId,
+          quantity_m2: isReception ? -l.m2 : l.m2,
+          document_ref: doc.number + ' (Annulé)'
+        });
+      }
+      
+      const newNumero = doc.number + ' (Annulé)';
+      await supabase.from(tableName).update({ numero: newNumero }).eq('id', docId);
+      
+      await loadState();
+      renderArchives();
+      if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
+      toast('Document annulé et stock restauré', 'success');
+    } catch (err) {
+      toast('Erreur durant l\\'annulation: ' + err.message, 'error');
+    }
   }
 
   function initArchives() {
