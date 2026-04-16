@@ -257,6 +257,17 @@ select.input{cursor:pointer;appearance:none;background-image:url("data:image/svg
   .table { width: 100%; border-collapse: collapse; }
   .table th, .table td { border: 1px solid #000; color: #000; padding: 8px; }
   .table th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* Bon Auto-Print Specific */
+  body.printing-bon * { visibility: hidden; }
+  body.printing-bon #print-section, body.printing-bon #print-section * { visibility: visible; }
+  body.printing-bon #print-section { position: absolute; left: 0; top: 0; width: 100%; padding: 0; font-family: 'Courier', monospace; }
+  .print-header { display: flex; justify-content: space-between; margin-bottom: 30px; }
+  .print-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+  .print-table th, .print-table td { border: 1px solid #000; padding: 8px; text-align: left; }
+  .print-table th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .signature-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 50px; }
+  .signature-box { border: 1px solid #000; height: 100px; text-align: center; font-size: 0.8rem; padding-top: 8px; }
 }
 
 /* AUTOCOMPLETE */

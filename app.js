@@ -661,6 +661,87 @@
       $('#br-line-m2').value = '';
       renderBrLines();
     });
+
+  function generatePrintLayout(bonData, linesData, type='reception') {
+    var section = $('#print-section');
+    if (!section) return;
+
+    var isReception = type === 'reception';
+    var title = isReception ? 'ORAMED — Bon de Réception' : 'ORAMED — Bon de Sortie';
+    
+    var infoRight = '';
+    if (isReception) {
+      infoRight = `
+          <p><strong>Fournisseur:</strong> ${bonData.fournisseur || 'Usine'}</p>
+          <p><strong>N° BL:</strong> ${bonData.bl || '—'}</p>
+          <p><strong>Transporteur:</strong> ${bonData.transporteur || '—'}</p>
+          <p><strong>Chauffeur:</strong> ${bonData.chauffeur || '—'} / <strong>Matricule:</strong> ${bonData.matricule || '—'}</p>
+      `;
+    } else {
+      infoRight = `
+          <p><strong>Type Client:</strong> ${bonData.client_type || '—'}</p>
+          <p><strong>Client:</strong> ${bonData.client_nom || bonData.client_id || '—'}</p>
+      `;
+    }
+
+    var html = `
+      <div class="print-header">
+        <div>
+          <h2 style="margin-bottom: 5px;">${title}</h2>
+          <p><strong>N°:</strong> ${bonData.numero || '—'}</p>
+          <p><strong>Date:</strong> ${bonData.date}</p>
+        </div>
+        <div style="text-align: right;">
+          ${infoRight}
+        </div>
+      </div>
+      <table class="print-table">
+        <thead>
+          <tr>
+            <th>Référence</th>
+            <th>Fournisseur / Marque</th>
+            <th>Format</th>
+            <th>Caisses</th>
+            <th>Total m²</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    linesData.forEach(function(l) {
+      var ref = refById(l.produit_id || l.refId);
+      html += `
+          <tr>
+            <td>${ref ? ref.nom : (l.produit_id || l.refId)}</td>
+            <td>${ref ? ref.fournisseur : ''}</td>
+            <td>${ref ? ref.format : ''}</td>
+            <td>${l.caisses}</td>
+            <td>${round2(l.m2)}</td>
+          </tr>
+      `;
+    });
+
+    html += `
+        </tbody>
+        <tfoot>
+          <tr>
+            <th colspan="3" style="text-align: right;">Total</th>
+            <th>${bonData.total_caisses}</th>
+            <th>${round2(bonData.total_m2)}</th>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="signature-row">
+        <div class="signature-box">Magasinier</div>
+        <div class="signature-box">Chauffeur</div>
+        <div class="signature-box">Contrôle</div>
+        <div class="signature-box">Direction</div>
+      </div>
+    `;
+
+    section.innerHTML = html;
+  }
+
     // Nouveau
     $('#br-nouveau').addEventListener('click', function () { 
       localStorage.removeItem('draft_reception_lines');
@@ -721,6 +802,15 @@
         toast('Réception validée : ' + (br.numero || 'BR-'+br.id), 'success');
         refreshDropdowns();
         if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
+        
+        // TRIGGER PRINT
+        setTimeout(() => {
+          generatePrintLayout(receptionData, lignesToInsert, 'reception');
+          document.body.classList.add('printing-bon');
+          window.print();
+          document.body.classList.remove('printing-bon');
+        }, 100);
+
       } catch (err) {
         toast('Erreur de validation: ' + err.message, 'error');
       }
@@ -887,6 +977,15 @@
         toast('Sortie validée : ' + (bs.numero || 'BS-'+bs.id), 'success');
         refreshDropdowns();
         if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
+
+        // TRIGGER PRINT
+        setTimeout(() => {
+          generatePrintLayout(sortieData, lignesToInsert, 'sortie');
+          document.body.classList.add('printing-bon');
+          window.print();
+          document.body.classList.remove('printing-bon');
+        }, 100);
+
       } catch (err) {
         toast('Erreur de validation BS: ' + err.message, 'error');
       }
