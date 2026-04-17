@@ -532,6 +532,64 @@
 
   </main>
 
+  <!-- ═══ QUICK EDIT MODAL ═══ -->
+  <div id="quick-edit-modal" class="modal" hidden>
+    <div class="modal__overlay" id="quick-edit-overlay"></div>
+    <div class="modal__content" style="max-width: 800px; width: 95%;">
+      <div class="modal__header">
+        <h2 id="qe-title">Édition Rapide de l'Archive</h2>
+        <button id="quick-edit-close" class="btn-icon">✕</button>
+      </div>
+      <div class="modal__body" style="overflow: visible;">
+        <div class="form-row" style="align-items: flex-end;">
+          <div class="form-group flex-2 autocomplete" style="position: relative;">
+            <label>Ajouter Référence</label>
+            <input type="text" id="qe-line-ref-search" class="input" placeholder="Chercher..." autocomplete="off">
+            <input type="hidden" id="qe-line-ref">
+            <div id="qe-autocomplete-list" class="autocomplete-list" hidden style="max-height: 200px; z-index: 9999;"></div>
+          </div>
+          <div class="form-group flex-1">
+            <label>Caisses</label>
+            <input type="number" id="qe-line-caisses" class="input" min="1" placeholder="Ex: 5">
+          </div>
+          <div class="form-group flex-1">
+            <label>Total m²</label>
+            <input type="text" id="qe-line-m2" class="input input--info" readonly>
+          </div>
+          <div class="form-group flex-btn">
+            <button type="button" id="qe-add-line" class="btn btn--accent" style="height: 38px;">+ Ajouter</button>
+          </div>
+        </div>
+        
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Référence</th>
+                <th>Caisses</th>
+                <th>Total m²</th>
+                <th style="width: 80px; text-align: center;">Retirer</th>
+              </tr>
+            </thead>
+            <tbody id="qe-lines-body"></tbody>
+            <tfoot>
+              <tr>
+                <th style="text-align: right;">Total</th>
+                <th id="qe-total-caisses">0</th>
+                <th id="qe-total-m2">0</th>
+                <th></th>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+      <div class="modal__header" style="justify-content: flex-end; border-top: 1px solid var(--border); border-bottom: none; gap: 10px;">
+        <button id="qe-btn-annuler" class="btn btn--outline">Annuler</button>
+        <button id="qe-btn-save" class="btn btn--primary">Mettre à jour et Imprimer</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══ DETAIL MODAL ═══ -->
   <div id="detail-modal" class="modal" hidden>
     <div class="modal__overlay"></div>

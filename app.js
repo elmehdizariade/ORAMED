@@ -920,7 +920,20 @@
 
       try {
         const { data: br, error: errBr } = await supabase.from('bons_reception').insert(receptionData).select().single();
-        if(errBr || !br) throw new Error(errBr ? errBr.message : 'Error insertion BR');
+        
+        // --- STRICT UNIQUE CONSTRAINT CHECK ---
+        if (errBr) {
+            if (errBr.code === '23505' || (errBr.message && errBr.message.toLowerCase().includes('duplicate'))) {
+                toast('Le bon ' + receptionData.numero + ' existe déjà. Modifié en brouillon (Auto-incrémenté).', 'error');
+                state.settings.brCounter++;
+                $('#br-number').textContent = brNextNumber();
+                return; // HALT EXECUTION: Do not parse lines, do not archive, do not print.
+            } else {
+                throw new Error(errBr.message);
+            }
+        }
+        if (!br) throw new Error('Error insertion BR: Unknown error from Supabase.');
+        // --------------------------------------
 
         const lignesToInsert = currentLines.map(l => ({
           bon_id: br.id,
@@ -1343,9 +1356,95 @@
     }
   }
 
-  window.editArchive = async function(id) {
-    if (!confirm("Voulez-vous modifier cette archive ? Le stock sera temporairement déduit le temps de la modification.")) return;
+  // ════════ QUICK EDIT MODAL LOGIC ════════
+  state.editingArchive = null;
+  state.editingArchiveOriginalLines = [];
+
+  function renderQeLines() {
+    var body = $('#qe-lines-body');
+    body.innerHTML = '';
+    var tCaisses = 0, tM2 = 0;
     
+    var lines = state.editingArchive ? state.editingArchive.lines : [];
+    if (!lines || lines.length === 0) {
+      body.innerHTML = '<tr><td colspan="4" class="empty-state">Aucune ligne</td></tr>';
+      $('#qe-total-caisses').textContent = '0';
+      $('#qe-total-m2').textContent = '0';
+      return;
+    }
+
+    lines.forEach(function (line, i) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + (line.nom || line.reference_id || line.refId) + '</td>' +
+        '<td>' + line.caisses + '</td>' +
+        '<td>' + round2(line.m2 || line.total_m2) + '</td>' +
+        '<td style="text-align: center;">' +
+        '<button class="btn btn--danger btn--sm" onclick="removeLineEdit(' + i + ')">✕</button>' +
+        '</td>';
+      body.appendChild(tr);
+      tCaisses += (parseInt(line.caisses) || 0);
+      tM2 += (parseFloat(line.m2 || line.total_m2) || 0);
+    });
+
+    $('#qe-total-caisses').textContent = tCaisses;
+    $('#qe-total-m2').textContent = round2(tM2);
+  }
+
+  window.removeLineEdit = function(index) {
+    if (state.editingArchive && state.editingArchive.lines) {
+      state.editingArchive.lines.splice(index, 1);
+      renderQeLines();
+    }
+  };
+
+  $('#qe-line-caisses').addEventListener('input', function () {
+    var refId = $('#qe-line-ref').value;
+    var ref = refById(refId);
+    var caisses = parseFloat($('#qe-line-caisses').value) || 0;
+    if (ref) {
+      $('#qe-line-m2').value = round2(caisses * (ref.m2ParCaisse || ref.m2_par_caisse));
+    } else {
+      $('#qe-line-m2').value = '';
+    }
+  });
+
+  $('#qe-add-line').addEventListener('click', function() {
+    if (!state.editingArchive) return;
+    if (!$selectedRefDraft) { alert("Sélectionnez une référence."); return; }
+    
+    var caisses = parseInt($('#qe-line-caisses').value) || 0;
+    if (caisses <= 0) { alert("Nombre de caisses invalide."); return; }
+    
+    var duplicate = state.editingArchive.lines.some(l => (l.reference_id || l.refId || l.produit_id) === $selectedRefDraft.id);
+    if (duplicate) { alert("Référence déjà présente."); return; }
+
+    var total_m2 = round2(caisses * ($selectedRefDraft.m2_par_caisse || $selectedRefDraft.m2ParCaisse));
+
+    state.editingArchive.lines.push({
+      reference_id: $selectedRefDraft.id,
+      produit_id: $selectedRefDraft.id,
+      refId: $selectedRefDraft.id,
+      nom: $selectedRefDraft.nom,
+      fournisseur: $selectedRefDraft.fournisseur,
+      format: $selectedRefDraft.format,
+      caisses: caisses,
+      nb_caisses: caisses,
+      total_m2: total_m2,
+      m2: total_m2
+    });
+
+    // Reset inputs
+    $('#qe-line-ref').value = '';
+    $('#qe-line-ref-search').value = '';
+    $('#qe-line-caisses').value = '';
+    $('#qe-line-m2').value = '';
+    $selectedRefDraft = null;
+    
+    renderQeLines();
+  });
+
+  window.editArchive = async function(id) {
     try {
       // Find the target document in Supabase
       const { data: archiveDbObj, error } = await supabase.from('archives').select('*').eq('id', id).single();
@@ -1353,17 +1452,17 @@
       
       const recordNumber = archiveDbObj.record_number;
       
-      // Find the target document in state.archives.receptions (loaded from DB bons_reception)
+      // Find the target document in state.archives.receptions
       let localArchiveIndex = -1;
       let bon = null;
       if (state.archives && Array.isArray(state.archives.receptions)) {
           localArchiveIndex = state.archives.receptions.findIndex(b => b.number === recordNumber || b.numero === recordNumber);
           if (localArchiveIndex !== -1) {
               bon = state.archives.receptions[localArchiveIndex];
-              // map lines format to match expected state.currentReception format
               if (bon && bon.lines) {
                   bon.lines = bon.lines.map(l => ({
                       reference_id: l.refId || l.produit_id,
+                      produit_id: l.refId || l.produit_id,
                       nom: (refById(l.refId || l.produit_id) || {}).nom || '',
                       fournisseur: (refById(l.refId || l.produit_id) || {}).fournisseur || '',
                       format: (refById(l.refId || l.produit_id) || {}).format || '',
@@ -1376,7 +1475,6 @@
           }
       }
 
-      // Also support state.archives_reception if present
       if (!bon && Array.isArray(state.archives_reception)) {
           const idx = state.archives_reception.findIndex(b => b.id === recordNumber);
           if (idx !== -1) bon = state.archives_reception[idx];
@@ -1387,70 +1485,144 @@
           return;
       }
 
-      // 1. REVERSE STOCK (Safety)
-      if (bon.lines && bon.lines.length > 0) {
-          for (const line of bon.lines) {
-              const refId = line.reference_id || line.refId || line.produit_id;
-              const ref = state.references.find(r => r.id === refId);
-              const m2ToDeduct = parseFloat(line.total_m2 || line.m2 || 0);
-              
-              if (ref && m2ToDeduct > 0) {
-                  ref.stock_m2 = (ref.stockM2 || ref.stock_m2 || 0) - m2ToDeduct; 
-                  ref.stockM2 = ref.stock_m2;
-                  
-                  const newStock = round2(ref.stock_m2);
-                  await supabase.from('produits').update({ stock_m2: newStock }).eq('id', ref.id);
-                  await supabase.from('mouvements').insert({
-                     date: today(),
-                     type: 'reception_annulation',
-                     reference_id: ref.id,
-                     quantity_m2: -m2ToDeduct,
-                     document_ref: recordNumber
-                  });
-              }
-          }
-      }
-
-      // Remove the old archive out of the active state arrays
-      if (Array.isArray(state.archives_reception)) {
-          const idx = state.archives_reception.findIndex(b => b.id === recordNumber);
-          if (idx !== -1) state.archives_reception.splice(idx, 1);
-      }
-      if (state.archives && Array.isArray(state.archives.receptions)) {
-          const idx = state.archives.receptions.findIndex(b => b.number === recordNumber || b.numero === recordNumber);
-          if (idx !== -1) state.archives.receptions.splice(idx, 1);
-      }
+      // LOAD TO MODAL STATE
+      state.editingArchive = JSON.parse(JSON.stringify(bon));
+      state.editingArchiveOriginalLines = JSON.parse(JSON.stringify(bon.lines || []));
+      state.editingArchiveDbId = id; // the supabase ID for the archive row
       
-      // Delete it from the Supabase databases so it doesn't duplicate
-      await supabase.from('archives').delete().eq('id', id);
-      if (bon.id && typeof bon.id === 'number') { 
-         await supabase.from('bons_reception').delete().eq('id', bon.id);
-      }
-
-      // PREPARE DRAFT ENVIRONMENT
-      brReset(); // clears state and inputs before injecting the payload
-
-      // 2. LOAD TO DRAFT
-      state.currentReception = JSON.parse(JSON.stringify(bon));
+      $('#qe-title').textContent = "Édition Rapide : " + recordNumber;
       
-      // 3. NAVIGATE UI to Bon de Réception
-      var navReceptionBtn = document.querySelector('.tab-btn[data-tab="reception"]');
-      if (navReceptionBtn) navReceptionBtn.click();
+      // Set up autocomplete if not done already for QE
+      setupAutocomplete('#qe-line-ref-search', '#qe-line-ref', '#qe-autocomplete-list', false);
       
-      // 4. PRE-FILL FORM
-      $('#br-date').value = bon.date || bon.record_date || today();
-      $('#br-bl').value = bon.bl || '';
-      if (bon.fournisseur || bon.tiers) $('#br-fournisseur').value = bon.fournisseur || bon.tiers;
-      
-      state.currentReception.lines = state.currentReception.lines || [];
-      renderBrLines();
-      
-      toast('Archive restaurée en brouillon. Stock déduit.', 'info');
+      renderQeLines();
+      $('#quick-edit-modal').hidden = false;
       
     } catch (err) {
       alert("Erreur: " + err.message);
     }
   };
+
+  $('#quick-edit-close').addEventListener('click', function() { $('#quick-edit-modal').hidden = true; });
+  $('#qe-btn-annuler').addEventListener('click', function() { $('#quick-edit-modal').hidden = true; });
+
+  $('#qe-btn-save').addEventListener('click', async function() {
+    if (!state.editingArchive || !state.editingArchive.lines || state.editingArchive.lines.length === 0) {
+      alert("Ajoutez au moins une ligne.");
+      return;
+    }
+    
+    if (!confirm("Ceci va ajuster les stocks en fonction de la différence avec votre ancien ticket. Continuer ?")) return;
+    
+    const recordNumber = state.editingArchive.numero || state.editingArchive.number || state.editingArchive.id;
+
+    try {
+      // 1. REVERSE OLD STOCK
+      if (state.editingArchiveOriginalLines.length > 0) {
+        for (const line of state.editingArchiveOriginalLines) {
+           const refId = line.reference_id || line.refId || line.produit_id;
+           const ref = state.references.find(r => r.id === refId);
+           const m2ToDeduct = parseFloat(line.total_m2 || line.m2 || 0);
+           
+           if (ref && m2ToDeduct > 0) {
+               ref.stock_m2 = (ref.stockM2 || ref.stock_m2 || 0) - m2ToDeduct; 
+               ref.stockM2 = ref.stock_m2;
+               const newStock = round2(ref.stock_m2);
+               await supabase.from('produits').update({ stock_m2: newStock }).eq('id', ref.id);
+               // Negative movement correction
+               await supabase.from('mouvements').insert({
+                  date: today(),
+                  type: 'reception_correction_out',
+                  reference_id: ref.id,
+                  quantity_m2: -m2ToDeduct,
+                  document_ref: recordNumber
+               });
+           }
+        }
+      }
+
+      // 2. APPLY NEW STOCK
+      for (const l of state.editingArchive.lines) {
+         const refId = l.reference_id || l.refId || l.produit_id;
+         const ref = state.references.find(r => r.id === refId);
+         if (ref) {
+            const newStockM2 = round2((ref.stockM2 || ref.stock_m2 || 0) + l.m2);
+            ref.stock_m2 = newStockM2;
+            ref.stockM2 = newStockM2;
+            await supabase.from('produits').update({ stock_m2: newStockM2 }).eq('id', refId);
+         }
+         await supabase.from('mouvements').insert({
+            date: today(),
+            type: 'reception_correction_in',
+            reference_id: refId,
+            quantity_m2: l.m2,
+            document_ref: recordNumber
+         });
+      }
+
+      // 3. UPDATE ARCHIVE IN SUPABASE (bons_reception_lignes & archives)
+      const newTotalCaisses = state.editingArchive.lines.reduce((s, l) => s + (parseInt(l.caisses)||0), 0);
+      const newTotalM2 = round2(state.editingArchive.lines.reduce((s, l) => s + (parseFloat(l.m2)||0), 0));
+      
+      const realBonId = state.editingArchive.originalId || state.editingArchive.bon_id || state.editingArchive.id;
+
+      // Ensure we hit the integer bon_id if looking inside bons_reception
+      const localBr = typeof realBonId === 'number' ? realBonId : null;
+
+      if (localBr) {
+         // Drop old lines
+         await supabase.from('bons_reception_lignes').delete().eq('bon_id', localBr);
+         // Insert new lines
+         const lignesToInsert = state.editingArchive.lines.map(l => ({
+            bon_id: localBr,
+            produit_id: l.reference_id || l.refId || l.produit_id,
+            caisses: l.caisses,
+            m2: l.m2
+         }));
+         await supabase.from('bons_reception_lignes').insert(lignesToInsert);
+         // Update totals in bons_reception
+         await supabase.from('bons_reception').update({ total_caisses: newTotalCaisses, total_m2: newTotalM2 }).eq('id', localBr);
+      }
+      
+      // Update the archives summary overview table
+      await supabase.from('archives').update({
+          lignes: state.editingArchive.lines.length,
+          total_m2: newTotalM2
+      }).eq('id', state.editingArchiveDbId);
+
+      // 4. PRINT & CLOSE
+      var printData = {
+         numero: recordNumber,
+         date: state.editingArchive.date || state.editingArchive.record_date || today(),
+         bl: state.editingArchive.bl || '—',
+         fournisseur: state.editingArchive.fournisseur || state.editingArchive.tiers || '—',
+         transporteur: state.editingArchive.transporteur || '—',
+         total_caisses: newTotalCaisses,
+         total_m2: newTotalM2
+      };
+
+      generatePrintLayout(printData, state.editingArchive.lines, 'reception');
+      
+      $('#quick-edit-modal').hidden = true;
+      state.editingArchive = null;
+      state.editingArchiveOriginalLines = [];
+      toast('Archive mise à jour avec succès.', 'success');
+
+      // Refresh background data
+      renderArchives();
+      loadState();
+
+      // Fire print shielded
+      setTimeout(() => {
+          document.body.classList.add('printing-bon');
+          window.print();
+          setTimeout(() => { document.body.classList.remove('printing-bon'); }, 500);
+      }, 150);
+
+    } catch (err) {
+      alert("Erreur critique lors de la mise à jour : " + err.message);
+    }
+  });
 
   window.deleteArchive = async function(id) {
     if (!confirm('Êtes-vous sûr de vouloir supprimer cette archive ?')) return;
