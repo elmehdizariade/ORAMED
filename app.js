@@ -1344,11 +1344,109 @@
   }
 
   window.editArchive = async function(id) {
-    if (!confirm('Voulez-vous modifier cette archive ?')) return;
+    if (!confirm("Voulez-vous modifier cette archive ? Le stock sera temporairement déduit le temps de la modification.")) return;
+    
     try {
-      const { data, error } = await supabase.from('archives').select('*').eq('id', id).single();
+      // Find the target document in Supabase
+      const { data: archiveDbObj, error } = await supabase.from('archives').select('*').eq('id', id).single();
       if (error) throw error;
-      alert('Édition de l\'archive N° ' + (data.record_number || id));
+      
+      const recordNumber = archiveDbObj.record_number;
+      
+      // Find the target document in state.archives.receptions (loaded from DB bons_reception)
+      let localArchiveIndex = -1;
+      let bon = null;
+      if (state.archives && Array.isArray(state.archives.receptions)) {
+          localArchiveIndex = state.archives.receptions.findIndex(b => b.number === recordNumber || b.numero === recordNumber);
+          if (localArchiveIndex !== -1) {
+              bon = state.archives.receptions[localArchiveIndex];
+              // map lines format to match expected state.currentReception format
+              if (bon && bon.lines) {
+                  bon.lines = bon.lines.map(l => ({
+                      reference_id: l.refId || l.produit_id,
+                      nom: (refById(l.refId || l.produit_id) || {}).nom || '',
+                      fournisseur: (refById(l.refId || l.produit_id) || {}).fournisseur || '',
+                      format: (refById(l.refId || l.produit_id) || {}).format || '',
+                      nb_caisses: l.caisses,
+                      caisses: l.caisses,
+                      total_m2: l.m2,
+                      m2: l.m2
+                  }));
+              }
+          }
+      }
+
+      // Also support state.archives_reception if present
+      if (!bon && Array.isArray(state.archives_reception)) {
+          const idx = state.archives_reception.findIndex(b => b.id === recordNumber);
+          if (idx !== -1) bon = state.archives_reception[idx];
+      }
+
+      if (!bon) {
+          alert("Archive introuvable dans la session active.");
+          return;
+      }
+
+      // 1. REVERSE STOCK (Safety)
+      if (bon.lines && bon.lines.length > 0) {
+          for (const line of bon.lines) {
+              const refId = line.reference_id || line.refId || line.produit_id;
+              const ref = state.references.find(r => r.id === refId);
+              const m2ToDeduct = parseFloat(line.total_m2 || line.m2 || 0);
+              
+              if (ref && m2ToDeduct > 0) {
+                  ref.stock_m2 = (ref.stockM2 || ref.stock_m2 || 0) - m2ToDeduct; 
+                  ref.stockM2 = ref.stock_m2;
+                  
+                  const newStock = round2(ref.stock_m2);
+                  await supabase.from('produits').update({ stock_m2: newStock }).eq('id', ref.id);
+                  await supabase.from('mouvements').insert({
+                     date: today(),
+                     type: 'reception_annulation',
+                     reference_id: ref.id,
+                     quantity_m2: -m2ToDeduct,
+                     document_ref: recordNumber
+                  });
+              }
+          }
+      }
+
+      // Remove the old archive out of the active state arrays
+      if (Array.isArray(state.archives_reception)) {
+          const idx = state.archives_reception.findIndex(b => b.id === recordNumber);
+          if (idx !== -1) state.archives_reception.splice(idx, 1);
+      }
+      if (state.archives && Array.isArray(state.archives.receptions)) {
+          const idx = state.archives.receptions.findIndex(b => b.number === recordNumber || b.numero === recordNumber);
+          if (idx !== -1) state.archives.receptions.splice(idx, 1);
+      }
+      
+      // Delete it from the Supabase databases so it doesn't duplicate
+      await supabase.from('archives').delete().eq('id', id);
+      if (bon.id && typeof bon.id === 'number') { 
+         await supabase.from('bons_reception').delete().eq('id', bon.id);
+      }
+
+      // PREPARE DRAFT ENVIRONMENT
+      brReset(); // clears state and inputs before injecting the payload
+
+      // 2. LOAD TO DRAFT
+      state.currentReception = JSON.parse(JSON.stringify(bon));
+      
+      // 3. NAVIGATE UI to Bon de Réception
+      var navReceptionBtn = document.querySelector('.tab-btn[data-tab="reception"]');
+      if (navReceptionBtn) navReceptionBtn.click();
+      
+      // 4. PRE-FILL FORM
+      $('#br-date').value = bon.date || bon.record_date || today();
+      $('#br-bl').value = bon.bl || '';
+      if (bon.fournisseur || bon.tiers) $('#br-fournisseur').value = bon.fournisseur || bon.tiers;
+      
+      state.currentReception.lines = state.currentReception.lines || [];
+      renderBrLines();
+      
+      toast('Archive restaurée en brouillon. Stock déduit.', 'info');
+      
     } catch (err) {
       alert("Erreur: " + err.message);
     }
