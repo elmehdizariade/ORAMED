@@ -252,62 +252,62 @@ select.input{cursor:pointer;appearance:none;background-image:url("data:image/svg
 
 /* 1. Invisible Shield Fix for Normal View
    Ensures the print templates never block interactions in the web app */
-#print-section { 
-  display: none !important; 
-  pointer-events: none; 
-  z-index: -9999; 
+#print-section {
+    display: none !important;
+    pointer-events: none;
+    position: absolute;
+    z-index: -999;
 }
 
 /* 2. Print View Configuration */
 @media print {
-  /* Reset Background */
-  body { background: #fff; color: #000; margin: 0; padding: 0; }
+    /* Hide the entire web app */
+    body * { visibility: hidden; }
+    .header, .tab-nav, .main, #auth-overlay, #fatal-error, .toast-container, .modal, .search-global { display: none !important; }
 
-  /* Hide Main Application UI Elements */
-  .header, 
-  .tab-nav, 
-  .main, 
-  #auth-overlay, 
-  #fatal-error, 
-  .toast-container, 
-  .modal,
-  .search-global, 
-  .form-row, 
-  .card__actions, 
-  .btn-icon, 
-  #btn-print-stock { 
-    display: none !important; 
-  }
-  
-  .panel { display: none !important; }
-  #panel-stock { display: block !important; }
+    /* Show only Print Section */
+    #print-section, #print-section * { visibility: visible; }
+    
+    #print-section {
+        display: block !important;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        padding: 20px;
+        font-family: 'Arial', sans-serif;
+        color: #1a202c;
+        z-index: 9999;
+        pointer-events: auto;
+    }
 
-  /* Bring Print Section to Front */
-  body.printing-bon #print-section { 
-    display: block !important; 
-    visibility: visible !important; 
-    position: absolute; 
-    left: 0; 
-    top: 0; 
-    width: 100%; 
-    padding: 0; 
-    font-family: 'Courier', monospace; 
-    pointer-events: auto; 
-    z-index: 9999; 
-  }
+    /* Header Styling */
+    .print-header-top { display: flex; justify-content: space-between; margin-bottom: 20px; }
+    .print-logo { border: 1px solid #cbd5e1; border-radius: 8px; padding: 5px 15px; font-weight: bold; font-size: 14px; }
+    .print-doc-info { text-align: right; font-size: 12px; line-height: 1.6; }
+    .print-doc-info p { margin: 0; }
 
-  body.printing-bon * { visibility: hidden; }
-  body.printing-bon #print-section * { visibility: visible; }
+    /* Main Box Styling */
+    .print-main-box { border: 1px solid #cbd5e1; border-radius: 12px; padding: 20px; }
+    .print-title { font-size: 24px; font-weight: 900; margin-top: 0; margin-bottom: 20px; }
 
-  /* Table and Layout Formatting */
-  .print-header { display: flex; justify-content: space-between; margin-bottom: 30px; }
-  .print-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-  .print-table th, .print-table td { border: 1px solid #000; padding: 8px; text-align: left; }
-  .print-table th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  
-  /* Signatures Grid */
-  .signature-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 50px; }
-  .signature-box { border: 1px solid #000; height: 100px; text-align: center; font-size: 0.8rem; padding-top: 8px; }
+    /* Grid Layouts */
+    .print-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 25px; }
+    .info-box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 15px; font-size: 13px; }
+
+    /* Table Styling */
+    .print-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; }
+    .print-table th, .print-table td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+    .print-table th { font-weight: bold; background-color: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+    /* Summary & Signatures */
+    .print-summary-container { display: flex; justify-content: flex-end; margin-bottom: 40px; }
+    .print-summary-box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 15px 20px; text-align: center; min-width: 200px; }
+    .summary-label { margin: 0 0 5px 0; font-size: 12px; color: #475569; }
+    .summary-value { margin: 0; font-size: 20px; font-weight: bold; }
+    
+    .print-signatures { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+    .signature-box { border: 1px solid #cbd5e1; border-radius: 8px; height: 80px; padding: 10px; font-size: 12px; display: flex; align-items: flex-end; justify-content: center; }
 }
 
 /* AUTOCOMPLETE */

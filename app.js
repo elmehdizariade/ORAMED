@@ -724,30 +724,86 @@
     // Bind the function to the existing UI button
     $('#br-add-line').addEventListener('click', ajouterLigne);
 
-  function generatePrintLayout(bonData, linesData, type='reception') {
+  function generatePrintLayout(bonData, linesData, docType='reception') {
     var section = $('#print-section');
     if (!section) return;
 
-    var isReception = type === 'reception';
-    var title = isReception ? 'ORAMED — Bon de Réception' : 'ORAMED — Bon de Sortie';
-    
-    var infoRight = '';
-    if (isReception) {
-      infoRight = `
-          <p><strong>Fournisseur:</strong> ${bonData.fournisseur || 'Usine'}</p>
-          <p><strong>N° BL:</strong> ${bonData.bl || '—'}</p>
-          <p><strong>Transporteur:</strong> ${bonData.transporteur || '—'}</p>
-          <p><strong>Chauffeur:</strong> ${bonData.chauffeur || '—'} / <strong>Matricule:</strong> ${bonData.matricule || '—'}</p>
+    if (docType === 'reception') {
+      var html = `
+        <div class="print-header-top">
+            <div class="print-logo">ORAMED</div>
+            <div class="print-doc-info">
+                <p><strong>Bon d'entrée</strong></p>
+                <p><strong>N° entrée :</strong> <span>${bonData.numero || '—'}</span></p>
+                <p><strong>Date :</strong> <span>${bonData.date || '—'}</span></p>
+                <p><strong>BL :</strong> <span>${bonData.bl || '—'}</span></p>
+            </div>
+        </div>
+
+        <div class="print-main-box">
+            <h1 class="print-title">BON DE RÉCEPTION</h1>
+
+            <div class="print-info-grid">
+                <div class="info-box"><strong>Source :</strong> Usine</div>
+                <div class="info-box"><strong>Fournisseur :</strong> <span>${bonData.fournisseur || '—'}</span></div>
+                <div class="info-box"><strong>Transporteur :</strong> <span>${bonData.transporteur || '—'}</span></div>
+            </div>
+
+            <table class="print-table">
+                <thead>
+                    <tr>
+                        <th>Référence</th>
+                        <th>Nb de caisse</th>
+                        <th>Total m²</th>
+                    </tr>
+                </thead>
+                <tbody>
       `;
-    } else {
-      infoRight = `
-          <p><strong>Type Client:</strong> ${bonData.client_type || '—'}</p>
-          <p><strong>Client:</strong> ${bonData.client_nom || bonData.client_id || '—'}</p>
+
+      linesData.forEach(function(l) {
+        var ref = refById(l.produit_id || l.refId);
+        var refName = ref ? ref.nom : (l.produit_id || l.refId);
+        html += `
+                    <tr>
+                        <td>${refName}</td>
+                        <td>${l.caisses}</td>
+                        <td>${round2(l.m2)} m²</td>
+                    </tr>
+        `;
+      });
+
+      html += `
+                </tbody>
+            </table>
+
+            <div class="print-summary-container">
+                <div class="print-summary-box">
+                    <p class="summary-label">Total métrage entrée</p>
+                    <p class="summary-value"><span>${round2(bonData.total_m2)}</span> m²</p>
+                </div>
+            </div>
+
+            <div class="print-signatures">
+                <div class="signature-box">Visa réception</div>
+                <div class="signature-box">Visa transport</div>
+                <div class="signature-box">Visa magasin</div>
+                <div class="signature-box">Visa direction</div>
+            </div>
+        </div>
       `;
+      section.innerHTML = html;
+      return;
     }
 
-    var html = `
-      <div class="print-header">
+    // Fallback original style for Bon de Sortie (as the new CSS overrides old global styles)
+    var title = 'ORAMED — Bon de Sortie';
+    var infoRight = `
+        <p><strong>Type Client:</strong> ${bonData.client_type || '—'}</p>
+        <p><strong>Client:</strong> ${bonData.client_nom || bonData.client_id || '—'}</p>
+    `;
+
+    var htmlSortie = `
+      <div style="display: flex; justify-content: space-between; margin-bottom: 30px;">
         <div>
           <h2 style="margin-bottom: 5px;">${title}</h2>
           <p><strong>N°:</strong> ${bonData.numero || '—'}</p>
@@ -757,14 +813,14 @@
           ${infoRight}
         </div>
       </div>
-      <table class="print-table">
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;" class="print-table">
         <thead>
           <tr>
-            <th>Référence</th>
-            <th>Fournisseur / Marque</th>
-            <th>Format</th>
-            <th>Caisses</th>
-            <th>Total m²</th>
+            <th style="border: 1px solid #cbd5e1; padding: 12px 15px; text-align: left; background: #f8fafc; font-weight: bold;">Référence</th>
+            <th style="border: 1px solid #cbd5e1; padding: 12px 15px; text-align: left; background: #f8fafc; font-weight: bold;">Fournisseur / Marque</th>
+            <th style="border: 1px solid #cbd5e1; padding: 12px 15px; text-align: left; background: #f8fafc; font-weight: bold;">Format</th>
+            <th style="border: 1px solid #cbd5e1; padding: 12px 15px; text-align: left; background: #f8fafc; font-weight: bold;">Caisses</th>
+            <th style="border: 1px solid #cbd5e1; padding: 12px 15px; text-align: left; background: #f8fafc; font-weight: bold;">Total m²</th>
           </tr>
         </thead>
         <tbody>
@@ -772,36 +828,36 @@
 
     linesData.forEach(function(l) {
       var ref = refById(l.produit_id || l.refId);
-      html += `
+      htmlSortie += `
           <tr>
-            <td>${ref ? ref.nom : (l.produit_id || l.refId)}</td>
-            <td>${ref ? ref.fournisseur : ''}</td>
-            <td>${ref ? ref.format : ''}</td>
-            <td>${l.caisses}</td>
-            <td>${round2(l.m2)}</td>
+            <td style="border-bottom: 1px solid #e2e8f0; padding: 12px 15px;">${ref ? ref.nom : (l.produit_id || l.refId)}</td>
+            <td style="border-bottom: 1px solid #e2e8f0; padding: 12px 15px;">${ref ? ref.fournisseur : ''}</td>
+            <td style="border-bottom: 1px solid #e2e8f0; padding: 12px 15px;">${ref ? ref.format : ''}</td>
+            <td style="border-bottom: 1px solid #e2e8f0; padding: 12px 15px;">${l.caisses}</td>
+            <td style="border-bottom: 1px solid #e2e8f0; padding: 12px 15px;">${round2(l.m2)}</td>
           </tr>
       `;
     });
 
-    html += `
+    htmlSortie += `
         </tbody>
         <tfoot>
           <tr>
-            <th colspan="3" style="text-align: right;">Total</th>
-            <th>${bonData.total_caisses}</th>
-            <th>${round2(bonData.total_m2)}</th>
+            <th colspan="3" style="text-align: right; padding: 12px 15px; background: #f8fafc; border-top: 2px solid #cbd5e1;">Total</th>
+            <th style="padding: 12px 15px; background: #f8fafc; border-top: 2px solid #cbd5e1;">${bonData.total_caisses}</th>
+            <th style="padding: 12px 15px; background: #f8fafc; border-top: 2px solid #cbd5e1;">${round2(bonData.total_m2)}</th>
           </tr>
         </tfoot>
       </table>
-      <div class="signature-row">
-        <div class="signature-box">Magasinier</div>
-        <div class="signature-box">Chauffeur</div>
-        <div class="signature-box">Contrôle</div>
-        <div class="signature-box">Direction</div>
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 50px;">
+        <div style="border: 1px solid #cbd5e1; border-radius: 8px; height: 80px; padding: 10px; font-size: 12px; display: flex; align-items: flex-end; justify-content: center;">Magasinier</div>
+        <div style="border: 1px solid #cbd5e1; border-radius: 8px; height: 80px; padding: 10px; font-size: 12px; display: flex; align-items: flex-end; justify-content: center;">Chauffeur</div>
+        <div style="border: 1px solid #cbd5e1; border-radius: 8px; height: 80px; padding: 10px; font-size: 12px; display: flex; align-items: flex-end; justify-content: center;">Contrôle</div>
+        <div style="border: 1px solid #cbd5e1; border-radius: 8px; height: 80px; padding: 10px; font-size: 12px; display: flex; align-items: flex-end; justify-content: center;">Direction</div>
       </div>
     `;
 
-    section.innerHTML = html;
+    section.innerHTML = htmlSortie;
   }
 
     // Nouveau
