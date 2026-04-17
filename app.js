@@ -1255,7 +1255,7 @@
       if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
       toast('Document annulé et stock restauré', 'success');
     } catch (err) {
-      toast('Erreur durant l\\'annulation: ' + err.message, 'error');
+      toast("Erreur durant l'annulation: " + err.message, 'error');
     }
   }
 
