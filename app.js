@@ -977,11 +977,21 @@
             timestamp: new Date().toISOString()
         };
 
-        if (!state.archives_reception) state.archives_reception = [];
+        // --- ROBUST ARCHIVE PUSH ---
+        // 1. Force state.archives_reception to be an Array if it isn't one
+        if (!Array.isArray(state.archives_reception)) {
+            state.archives_reception = [];
+        }
         state.archives_reception.push(archiveEntry);
 
-        if (!state.archives) state.archives = [];
-        state.archives.push(archiveEntry);
+        // 2. Force state.archives.receptions to be an Array (since state.archives is an object)
+        if (typeof state.archives === 'object' && state.archives !== null) {
+            if (!Array.isArray(state.archives.receptions)) {
+                state.archives.receptions = [];
+            }
+            state.archives.receptions.push(archiveEntry);
+        }
+        // ---------------------------
 
         // 2. Push to Supabase 'archives' table to reliably populate renderArchives view
         await supabase.from('archives').insert({
