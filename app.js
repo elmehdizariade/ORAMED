@@ -949,6 +949,51 @@
           });
         }
 
+        // ════ ARCHIVING LOGIC ════
+        const finalLines = currentLines.length > 0 
+            ? currentLines 
+            : Array.from(document.querySelectorAll('#br-lines-body tr:not(.empty-state)')).map(row => {
+                const cells = row.querySelectorAll('td');
+                return {
+                    reference_id: cells[0]?.innerText || '',
+                    fournisseur: cells[1]?.innerText || '',
+                    format: cells[2]?.innerText || '',
+                    caisses: parseFloat(cells[3]?.innerText || 0),
+                    m2: parseFloat(cells[4]?.innerText || 0)
+                };
+            });
+
+        const finalTotalM2 = finalLines.reduce((sum, line) => sum + (parseFloat(line.m2) || 0), 0);
+
+        // 1. Push to Antigravity State (User Required)
+        const archiveEntry = {
+            id: br.numero || ('BR-' + br.id),
+            type: 'Réception',
+            date: date || new Date().toLocaleDateString('en-GB'),
+            fournisseur: $('#br-fournisseur').value || '—',
+            lines: JSON.parse(JSON.stringify(finalLines)), // Deep copy the lines
+            total_m2: finalTotalM2.toFixed(2),
+            status: 'Validé',
+            timestamp: new Date().toISOString()
+        };
+
+        if (!state.archives_reception) state.archives_reception = [];
+        state.archives_reception.push(archiveEntry);
+
+        if (!state.archives) state.archives = [];
+        state.archives.push(archiveEntry);
+
+        // 2. Push to Supabase 'archives' table to reliably populate renderArchives view
+        await supabase.from('archives').insert({
+            record_number: br.numero || ('BR-' + br.id),
+            record_type: 'Réception',
+            record_date: date || new Date().toLocaleDateString('en-GB'),
+            tiers: $('#br-fournisseur').value || '—',
+            lignes: finalLines.length,
+            total_m2: finalTotalM2.toFixed(2)
+        });
+        // ════ END ARCHIVING LOGIC ════
+
         await loadState();
         localStorage.removeItem('draft_reception_lines');
         if (state.currentReception) state.currentReception.lines = [];
