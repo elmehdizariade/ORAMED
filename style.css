@@ -246,29 +246,46 @@ select.input{cursor:pointer;appearance:none;background-image:url("data:image/svg
 @media(max-width:768px){.header{padding:0 14px}.search-global__input{width:160px}.tab-nav{padding:8px 14px}.main{padding:16px}.form-grid,.form-grid--2{grid-template-columns:1fr}.form-row{flex-direction:column;align-items:stretch}.flex-1,.flex-2,.flex-btn{flex:auto;min-width:auto}.summary-grid{grid-template-columns:1fr 1fr}.card__actions{flex-direction:column}}
 @media(max-width:480px){.summary-grid{grid-template-columns:1fr}.search-global__input{width:120px}.header__logo-text{display:none}}
 
-/* PRINT */
+/* ==========================================================================
+   PRINT STYLES — BON DE RÉCEPTION & SORTIE
+   ========================================================================== */
+
+/* 1. Invisible Shield Fix for Normal View
+   Ensures the print templates never block interactions in the web app */
 #print-section { 
   display: none !important; 
   pointer-events: none; 
   z-index: -9999; 
 }
 
+/* 2. Print View Configuration */
 @media print {
-  body { background: #fff; color: #000; }
-  .header, .tab-nav, .search-global, .form-row, .card__actions, .btn-icon, #btn-print-stock { display: none !important; }
+  /* Reset Background */
+  body { background: #fff; color: #000; margin: 0; padding: 0; }
+
+  /* Hide Main Application UI Elements */
+  .header, 
+  .tab-nav, 
+  .main, 
+  #auth-overlay, 
+  #fatal-error, 
+  .toast-container, 
+  .modal,
+  .search-global, 
+  .form-row, 
+  .card__actions, 
+  .btn-icon, 
+  #btn-print-stock { 
+    display: none !important; 
+  }
+  
   .panel { display: none !important; }
   #panel-stock { display: block !important; }
-  .main { padding: 0; max-width: 100%; margin: 0; }
-  .card { box-shadow: none !important; border: none !important; padding: 0 !important; margin: 0 !important; }
-  .table { width: 100%; border-collapse: collapse; }
-  .table th, .table td { border: 1px solid #000; color: #000; padding: 8px; }
-  .table th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
-  /* Bon Auto-Print Specific */
-  body.printing-bon * { visibility: hidden; }
+  /* Bring Print Section to Front */
   body.printing-bon #print-section { 
     display: block !important; 
-    visibility: visible; 
+    visibility: visible !important; 
     position: absolute; 
     left: 0; 
     top: 0; 
@@ -278,11 +295,17 @@ select.input{cursor:pointer;appearance:none;background-image:url("data:image/svg
     pointer-events: auto; 
     z-index: 9999; 
   }
+
+  body.printing-bon * { visibility: hidden; }
   body.printing-bon #print-section * { visibility: visible; }
+
+  /* Table and Layout Formatting */
   .print-header { display: flex; justify-content: space-between; margin-bottom: 30px; }
   .print-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
   .print-table th, .print-table td { border: 1px solid #000; padding: 8px; text-align: left; }
   .print-table th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  
+  /* Signatures Grid */
   .signature-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 50px; }
   .signature-box { border: 1px solid #000; height: 100px; text-align: center; font-size: 0.8rem; padding-top: 8px; }
 }

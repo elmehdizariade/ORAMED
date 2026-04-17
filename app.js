@@ -803,12 +803,18 @@
         refreshDropdowns();
         if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
         
-        // TRIGGER PRINT
+        // TRIGGER PRINT SAFELY WITH TRY/CATCH
         setTimeout(() => {
-          generatePrintLayout(receptionData, lignesToInsert, 'reception');
-          document.body.classList.add('printing-bon');
-          window.print();
-          document.body.classList.remove('printing-bon');
+          try {
+            generatePrintLayout(receptionData, lignesToInsert, 'reception');
+            document.body.classList.add('printing-bon');
+            window.print();
+          } catch (printErr) {
+            console.error('[ORAMED Print Error] Échec de la génération/impression Reception:', printErr);
+            alert('Erreur critique lors de la préparation de l\'impression: ' + printErr.message);
+          } finally {
+            document.body.classList.remove('printing-bon');
+          }
         }, 100);
 
       } catch (err) {
@@ -980,12 +986,18 @@
         refreshDropdowns();
         if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
 
-        // TRIGGER PRINT
+        // TRIGGER PRINT SAFELY WITH TRY/CATCH
         setTimeout(() => {
-          generatePrintLayout(sortieData, lignesToInsert, 'sortie');
-          document.body.classList.add('printing-bon');
-          window.print();
-          document.body.classList.remove('printing-bon');
+          try {
+            generatePrintLayout(sortieData, lignesToInsert, 'sortie');
+            document.body.classList.add('printing-bon');
+            window.print();
+          } catch (printErr) {
+            console.error('[ORAMED Print Error] Échec de la génération/impression Sortie:', printErr);
+            alert('Erreur critique lors de la préparation de l\'impression: ' + printErr.message);
+          } finally {
+            document.body.classList.remove('printing-bon');
+          }
         }, 100);
 
       } catch (err) {
