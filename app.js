@@ -97,6 +97,9 @@
 
       state.settings.brCounter = state.archives.receptions.length + 1;
       state.settings.bsCounter = state.archives.sorties.length + 1;
+      
+      // Sync for legacy variable support
+      state.archives_reception = state.archives.receptions;
 
     } catch (err) {
       console.error('loadState Supabase error:', err);
@@ -1360,41 +1363,50 @@
   state.editingArchive = null;
   state.editingArchiveOriginalLines = [];
 
-  function renderQeLines() {
-    var body = $('#qe-lines-body');
-    body.innerHTML = '';
-    var tCaisses = 0, tM2 = 0;
-    
-    var lines = state.editingArchive ? state.editingArchive.lines : [];
-    if (!lines || lines.length === 0) {
-      body.innerHTML = '<tr><td colspan="4" class="empty-state">Aucune ligne</td></tr>';
-      $('#qe-total-caisses').textContent = '0';
-      $('#qe-total-m2').textContent = '0';
-      return;
+  function renderQuickEditTable() {
+    const tbody = document.querySelector('#quick-edit-modal tbody'); 
+    if (!tbody) return;
+
+    const lines = state.editingArchive?.lines || [];
+    let totalCaisses = 0;
+    let totalM2 = 0;
+
+    if (lines.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center;">Aucune ligne</td></tr>';
+    } else {
+        tbody.innerHTML = lines.map((line, index) => {
+            const caissesValue = line.nb_caisses || line.caisses || 0;
+            const m2Value = line.total_m2 || line.m2 || 0;
+            
+            totalCaisses += Number(caissesValue) || 0;
+            totalM2 += Number(m2Value) || 0;
+            
+            return `
+                <tr>
+                    <td>${line.reference_id || line.nom || '—'}</td>
+                    <td>${caissesValue}</td>
+                    <td>${round2(m2Value)}</td>
+                    <td>
+                        <button onclick="removeLineEdit(${index})" class="btn-icon btn-danger" style="padding: 2px 6px;">
+                            ✖
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
     }
 
-    lines.forEach(function (line, i) {
-      var tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td>' + (line.nom || line.reference_id || line.refId) + '</td>' +
-        '<td>' + line.caisses + '</td>' +
-        '<td>' + round2(line.m2 || line.total_m2) + '</td>' +
-        '<td style="text-align: center;">' +
-        '<button class="btn btn--danger btn--sm" onclick="removeLineEdit(' + i + ')">✕</button>' +
-        '</td>';
-      body.appendChild(tr);
-      tCaisses += (parseInt(line.caisses) || 0);
-      tM2 += (parseFloat(line.m2 || line.total_m2) || 0);
-    });
-
-    $('#qe-total-caisses').textContent = tCaisses;
-    $('#qe-total-m2').textContent = round2(tM2);
+    // Update the totals at the bottom of the modal
+    const totalCaissesEl = document.getElementById('modal-total-caisses');
+    const totalM2El = document.getElementById('modal-total-m2');
+    if (totalCaissesEl) totalCaissesEl.innerText = totalCaisses;
+    if (totalM2El) totalM2El.innerText = totalM2.toFixed(2);
   }
 
   window.removeLineEdit = function(index) {
     if (state.editingArchive && state.editingArchive.lines) {
       state.editingArchive.lines.splice(index, 1);
-      renderQeLines();
+      renderQuickEditTable();
     }
   };
 
@@ -1441,65 +1453,72 @@
     $('#qe-line-m2').value = '';
     $selectedRefDraft = null;
     
-    renderQeLines();
+    renderQuickEditTable();
   });
 
-  window.editArchive = async function(id) {
+  // 1. Rename to openEditModal as requested and make it robust
+  window.editArchive = window.openEditModal = async function(bonId) {
     try {
-      // Find the target document in Supabase
-      const { data: archiveDbObj, error } = await supabase.from('archives').select('*').eq('id', id).single();
+      // Find the record in the archive summary table first (to get the record_number)
+      const { data: archiveSummary, error } = await supabase.from('archives').select('*').eq('id', bonId).single();
       if (error) throw error;
       
-      const recordNumber = archiveDbObj.record_number;
+      const recordNumber = archiveSummary.record_number;
       
-      // Find the target document in state.archives.receptions
-      let localArchiveIndex = -1;
-      let bon = null;
-      if (state.archives && Array.isArray(state.archives.receptions)) {
-          localArchiveIndex = state.archives.receptions.findIndex(b => b.number === recordNumber || b.numero === recordNumber);
-          if (localArchiveIndex !== -1) {
-              bon = state.archives.receptions[localArchiveIndex];
-              if (bon && bon.lines) {
-                  bon.lines = bon.lines.map(l => ({
-                      reference_id: l.refId || l.produit_id,
-                      produit_id: l.refId || l.produit_id,
-                      nom: (refById(l.refId || l.produit_id) || {}).nom || '',
-                      fournisseur: (refById(l.refId || l.produit_id) || {}).fournisseur || '',
-                      format: (refById(l.refId || l.produit_id) || {}).format || '',
-                      nb_caisses: l.caisses,
-                      caisses: l.caisses,
-                      total_m2: l.m2,
-                      m2: l.m2
-                  }));
-              }
-          }
-      }
-
-      if (!bon && Array.isArray(state.archives_reception)) {
-          const idx = state.archives_reception.findIndex(b => b.id === recordNumber);
-          if (idx !== -1) bon = state.archives_reception[idx];
-      }
-
-      if (!bon) {
-          alert("Archive introuvable dans la session active.");
-          return;
-      }
-
-      // LOAD TO MODAL STATE
-      state.editingArchive = JSON.parse(JSON.stringify(bon));
-      state.editingArchiveOriginalLines = JSON.parse(JSON.stringify(bon.lines || []));
-      state.editingArchiveDbId = id; // the supabase ID for the archive row
+      // 2. Find the full archive in state (linked to the database bons_reception)
+      const archive = (state.archives_reception || state.archives.receptions).find(a => 
+          a.number === recordNumber || a.numero === recordNumber || a.id === bonId
+      );
       
+      if (!archive) {
+        alert("Archive introuvable dans la session active (" + recordNumber + ").");
+        return;
+      }
+
+      // 3. Safely parse lines (Failsafe if Supabase returns JSON string or if nested)
+      let parsedLines = [];
+      if (archive.lines) {
+        parsedLines = typeof archive.lines === 'string' ? JSON.parse(archive.lines) : archive.lines;
+      }
+      
+      // Map to standardized format for QE
+      parsedLines = parsedLines.map(l => ({
+          reference_id: l.refId || l.produit_id || l.reference_id,
+          produit_id: l.refId || l.produit_id || l.reference_id,
+          nom: (refById(l.refId || l.produit_id || l.reference_id) || {}).nom || (l.nom || ''),
+          fournisseur: (refById(l.refId || l.produit_id || l.reference_id) || {}).fournisseur || (l.fournisseur || ''),
+          format: (refById(l.refId || l.produit_id || l.reference_id) || {}).format || (l.format || ''),
+          caisses: l.caisses || l.nb_caisses || 0,
+          nb_caisses: l.caisses || l.nb_caisses || 0,
+          m2: l.m2 || l.total_m2 || 0,
+          total_m2: l.m2 || l.total_m2 || 0
+      }));
+
+      // 4. Populate the editing state (Deep copy)
+      state.editingArchive = JSON.parse(JSON.stringify({ ...archive, lines: parsedLines }));
+      state.editingArchiveOriginalLines = JSON.parse(JSON.stringify(parsedLines));
+      state.editingArchiveDbId = bonId; // The UUID for the 'archives' table update
+      
+      // Extra safety: Store the original bon_id (integer) for the sub-table update
+      state.editingArchive.originalId = archive.id;
+
+      // 5. Open Modal and update UI
       $('#qe-title').textContent = "Édition Rapide : " + recordNumber;
       
-      // Set up autocomplete if not done already for QE
+      // Reset Modal inputs
+      $('#qe-line-ref-search').value = '';
+      $('#qe-line-ref').value = '';
+      $('#qe-line-caisses').value = '';
+      $('#qe-line-m2').value = '';
+      
       setupAutocomplete('#qe-line-ref-search', '#qe-line-ref', '#qe-autocomplete-list', false);
       
-      renderQeLines();
+      renderQuickEditTable();
       $('#quick-edit-modal').hidden = false;
       
     } catch (err) {
-      alert("Erreur: " + err.message);
+      console.error('[ORAMED QE Error]', err);
+      alert("Erreur lors de l'ouverture du modal: " + err.message);
     }
   };
 
