@@ -31,8 +31,12 @@
     sorties: [],
     archives: { receptions: [], sorties: [] },
     settings: { brCounter: 1, bsCounter: 1 },
-    mouvements: []
+    mouvements: [],
+    currentReception: { lines: [] } // Antigravity Staging
   };
+
+  // Temp state for searchable reference combobox
+  let $selectedRefDraft = null;
 
   // ── Supabase State loading ──
   async function loadState() {
@@ -299,6 +303,7 @@
     function selectItem(ref) {
       searchInput.value = `${ref.nom} (${ref.fournisseur} · ${ref.format})`;
       hiddenInput.value = ref.id;
+      $selectedRefDraft = ref; // Staging the full reference object
       listEl.hidden = true;
       hiddenInput.dispatchEvent(new Event('change'));
     }
@@ -440,28 +445,45 @@
   var brDraft = { lines: [] };
 
   function saveBrDraft() {
-    localStorage.setItem('draft_reception_lines', JSON.stringify(brDraft.lines));
+    const lines = state.currentReception.lines.length > 0 
+      ? state.currentReception.lines.map(l => ({ refId: l.reference_id, caisses: l.caisses, m2: l.m2 }))
+      : brDraft.lines;
+    localStorage.setItem('draft_reception_lines', JSON.stringify(lines));
   }
 
   function loadBrDraft() {
     try {
       var saved = localStorage.getItem('draft_reception_lines');
-      if (saved) brDraft.lines = JSON.parse(saved);
+      if (saved) {
+        const lines = JSON.parse(saved);
+        brDraft.lines = lines;
+        state.currentReception.lines = lines.map(l => ({
+          reference_id: l.refId || l.reference_id,
+          caisses: l.caisses,
+          m2: l.m2,
+          nom: refById(l.refId || l.reference_id)?.nom || '?',
+          fournisseur: refById(l.refId || l.reference_id)?.fournisseur || '',
+          format: refById(l.refId || l.reference_id)?.format || ''
+        }));
+      }
     } catch (e) {
       console.error("Erreur chargement brouillon", e);
     }
   }
 
   function editLine(idx) {
-    var line = brDraft.lines[idx];
-    $('#br-line-ref').value = line.refId;
-    var ref = refById(line.refId);
+    const lines = state.currentReception.lines.length > 0 ? state.currentReception.lines : brDraft.lines;
+    var line = lines[idx];
+    const refId = line.reference_id || line.refId;
+    $('#br-line-ref').value = refId;
+    var ref = refById(refId);
     if (ref && $('#br-line-ref-search')) {
       $('#br-line-ref-search').value = `${ref.nom} (${ref.fournisseur} · ${ref.format})`;
+      $selectedRefDraft = ref;
     }
     $('#br-line-caisses').value = line.caisses;
     $('#br-line-caisses').dispatchEvent(new Event('input'));
-    brDraft.lines.splice(idx, 1);
+    lines.splice(idx, 1);
     saveBrDraft();
     renderBrLines();
   }
@@ -483,6 +505,7 @@
 
   function brReset() {
     brDraft = { lines: [] };
+    state.currentReception.lines = [];
     $('#br-date').value = today();
     $('#br-bl').value = '';
     $('#br-fournisseur').value = '';
@@ -508,16 +531,17 @@
     var body = $('#br-lines-body');
     body.innerHTML = '';
     var tCaisses = 0, tM2 = 0;
-    if (brDraft.lines.length === 0) {
+    const lines = state.currentReception.lines.length > 0 ? state.currentReception.lines : brDraft.lines;
+    
+    if (lines.length === 0) {
       body.innerHTML = '<tr><td colspan="6" class="empty-state">Aucune ligne ajoutée</td></tr>';
     } else {
-      brDraft.lines.forEach(function (line, i) {
-        var ref = refById(line.refId);
+      lines.forEach(function (line, i) {
         var tr = document.createElement('tr');
         tr.innerHTML =
-          '<td>' + (ref ? ref.nom : '?') + '</td>' +
-          '<td>' + (ref ? ref.fournisseur : '') + '</td>' +
-          '<td>' + (ref ? ref.format : '') + '</td>' +
+          '<td>' + (line.nom || '?') + '</td>' +
+          '<td>' + (line.fournisseur || '') + '</td>' +
+          '<td>' + (line.format || '') + '</td>' +
           '<td>' + line.caisses + '</td>' +
           '<td>' + round2(line.m2) + '</td>' +
           '<td>' +
@@ -534,9 +558,7 @@
     // Bind buttons
     body.querySelectorAll('.btn--delete').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        brDraft.lines.splice(parseInt(btn.getAttribute('data-idx')), 1);
-        saveBrDraft();
-        renderBrLines();
+        toggleLineDeletion(parseInt(btn.getAttribute('data-idx')));
       });
     });
     body.querySelectorAll('.btn--edit').forEach(function (btn) {
@@ -545,7 +567,17 @@
       });
     });
     // Lock/unlock header based on line count
-    toggleHeaderLock(brDraft.lines.length > 0);
+    toggleHeaderLock((state.currentReception.lines.length || brDraft.lines.length) > 0);
+  }
+
+  function toggleLineDeletion(idx) {
+    if (state.currentReception.lines.length > 0) {
+      state.currentReception.lines.splice(idx, 1);
+    } else {
+      brDraft.lines.splice(idx, 1);
+    }
+    saveBrDraft();
+    renderBrLines();
   }
 
   // ── Transporteurs Fleet Data ──
@@ -643,24 +675,54 @@
     $('#br-line-ref').addEventListener('change', function () {
       $('#br-line-caisses').dispatchEvent(new Event('input'));
     });
-    // Add line
-    $('#br-add-line').addEventListener('click', function () {
-      var refId = $('#br-line-ref').value;
-      var ref = refById(refId);
-      var caisses = parseInt($('#br-line-caisses').value) || 0;
-      if (!ref) { toast('Sélectionnez une référence', 'error'); return; }
-      if (caisses <= 0) { toast('Nombre de caisses invalide', 'error'); return; }
-      // Prevent duplicate references
-      var duplicate = brDraft.lines.some(function (l) { return l.refId === refId; });
-      if (duplicate) { alert('Cette référence a déjà été ajoutée. Veuillez modifier la ligne existante.'); return; }
-      brDraft.lines.push({ refId: refId, caisses: caisses, m2: round2(caisses * ref.m2ParCaisse) });
-      saveBrDraft();
+    // ── ajouterLigne Function (Antigravity Core) ──
+    function ajouterLigne() {
+      // 1. Verify staging
+      if (!$selectedRefDraft) {
+        alert("Veuillez d'abord sélectionner une référence dans la recherche.");
+        return;
+      }
+
+      // 2. Get input values
+      const caisses = parseInt($('#br-line-caisses').value) || 0;
+      if (caisses <= 0) {
+        alert("Nombre de caisses invalide. Veuillez saisir un entier supérieur à 0.");
+        return;
+      }
+
+      // 3. Prevent Duplicate Principle
+      const duplicate = state.currentReception.lines.some(l => l.reference_id === $selectedRefDraft.id);
+      if (duplicate) {
+        alert("Cette référence est déjà dans la liste. Modifiez la ligne existante si besoin.");
+        return;
+      }
+
+      // 4. Calculate total_m2 (Antigravity Math)
+      const total_m2 = round2(caisses * ($selectedRefDraft.m2_par_caisse || $selectedRefDraft.m2ParCaisse));
+
+      // 5. Push to state
+      state.currentReception.lines.push({
+        reference_id: $selectedRefDraft.id,
+        nom: $selectedRefDraft.nom,
+        fournisseur: $selectedRefDraft.fournisseur,
+        format: $selectedRefDraft.format,
+        caisses: caisses,
+        m2: total_m2
+      });
+
+      // Clear inputs
       $('#br-line-ref').value = '';
       if ($('#br-line-ref-search')) $('#br-line-ref-search').value = '';
       $('#br-line-caisses').value = '';
       $('#br-line-m2').value = '';
+      $selectedRefDraft = null; // Reset staging
+
       renderBrLines();
-    });
+      saveBrDraft();
+    }
+
+    // Bind the function to the existing UI button
+    $('#br-add-line').addEventListener('click', ajouterLigne);
 
   function generatePrintLayout(bonData, linesData, type='reception') {
     var section = $('#print-section');
@@ -755,6 +817,8 @@
       
       var number = brNextNumber();
       var date = $('#br-date').value || today();
+      const lines = state.currentReception.lines.length > 0 ? state.currentReception.lines : brDraft.lines;
+      
       var receptionData = {
         numero: number,
         date: date,
@@ -763,8 +827,8 @@
         transporteur: $('#br-transporteur').value,
         chauffeur: $('#br-chauffeur').style.display !== 'none' ? $('#br-chauffeur').value : $('#br-chauffeur-select').value,
         matricule: $('#br-matricule').value,
-        total_caisses: brDraft.lines.reduce(function (s, l) { return s + l.caisses; }, 0),
-        total_m2: round2(brDraft.lines.reduce(function (s, l) { return s + l.m2; }, 0)),
+        total_caisses: lines.reduce(function (s, l) { return s + l.caisses; }, 0),
+        total_m2: round2(lines.reduce(function (s, l) { return s + l.m2; }, 0)),
         created_at: new Date().toISOString()
       };
 
@@ -772,25 +836,25 @@
         const { data: br, error: errBr } = await supabase.from('bons_reception').insert(receptionData).select().single();
         if(errBr || !br) throw new Error(errBr ? errBr.message : 'Error insertion BR');
 
-        const lignesToInsert = brDraft.lines.map(l => ({
+        const lignesToInsert = lines.map(l => ({
           bon_id: br.id,
-          produit_id: l.refId,
+          produit_id: l.reference_id || l.refId,
           caisses: l.caisses,
           m2: l.m2
         }));
 
         await supabase.from('bons_reception_lignes').insert(lignesToInsert);
 
-        for (const l of brDraft.lines) {
-          const ref = refById(l.refId);
+        for (const l of lines) {
+          const ref = refById(l.reference_id || l.refId);
           if (ref) {
             const newStockM2 = round2((ref.stockM2 || 0) + l.m2);
-            await supabase.from('produits').update({ stock_m2: newStockM2 }).eq('id', l.refId);
+            await supabase.from('produits').update({ stock_m2: newStockM2 }).eq('id', l.reference_id || l.refId);
           }
           await supabase.from('mouvements').insert({
             date: date,
             type: 'reception',
-            reference_id: l.refId,
+            reference_id: l.reference_id || l.refId,
             quantity_m2: l.m2,
             document_ref: br.numero || ('BR-' + br.id)
           });
@@ -798,6 +862,7 @@
 
         await loadState();
         localStorage.removeItem('draft_reception_lines');
+        state.currentReception.lines = [];
         brReset();
         toast('Réception validée : ' + (br.numero || 'BR-'+br.id), 'success');
         refreshDropdowns();
@@ -1078,186 +1143,88 @@
   // ══════════════════════════════════════════════════
   // ARCHIVES
   // ══════════════════════════════════════════════════
-  function renderArchives() {
+  async function renderArchives() {
     var search = ($('#archives-search').value || '').toLowerCase();
     var type = $('#archives-type').value;
     var body = $('#archives-body');
-    body.innerHTML = '';
-    var items = [];
-    if (type === 'all' || type === 'receptions') {
-      state.archives.receptions.forEach(function (r) {
-        items.push({ type: 'Réception', number: r.number, date: r.date, tiers: r.fournisseur, lines: r.lines.length, totalM2: r.totalM2, data: r, docType: 'reception' });
-      });
-    }
-    if (type === 'all' || type === 'sorties') {
-      state.archives.sorties.forEach(function (s) {
-        items.push({ type: 'Sortie', number: s.number, date: s.date, tiers: s.client, lines: s.lines.length, totalM2: s.totalM2, data: s, docType: 'sortie' });
-      });
-    }
-    // Filter
-    if (search) {
-      items = items.filter(function (it) {
-        return (it.number + it.tiers + it.date + it.type).toLowerCase().indexOf(search) >= 0;
-      });
-    }
-    // Sort newest first
-    items.sort(function (a, b) { return (b.data.createdAt || '').localeCompare(a.data.createdAt || ''); });
-    if (items.length === 0) {
-      body.innerHTML = '<tr><td colspan="7" class="empty-state">Aucune archive trouvée</td></tr>';
-      return;
-    }
-    items.forEach(function (it) {
-      var tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td>' + it.number + '</td>' +
-        '<td>' + it.type + '</td>' +
-        '<td>' + it.date + '</td>' +
-        '<td>' + (it.tiers || '—') + '</td>' +
-        '<td>' + it.lines + '</td>' +
-        '<td>' + round2(it.totalM2) + '</td>' +
-        '<td>' +
-        '<button class="btn-icon btn-action-print" title="Imprimer" data-id="' + it.data.id + '" data-doc="' + it.docType + '">🖨️</button> ' +
-        '<button class="btn-icon btn-action-edit" title="Modifier" data-id="' + it.data.id + '" data-doc="' + it.docType + '">✏️</button> ' +
-        '<button class="btn-icon btn-action-delete" title="Annuler" data-id="' + it.data.id + '" data-doc="' + it.docType + '" style="color:var(--danger)">🗑️</button>' +
-        '</td>';
-      body.appendChild(tr);
-    });
+    body.innerHTML = '<tr><td colspan="7">Chargement...</td></tr>';
     
-    // Bind Action buttons
-    body.querySelectorAll('.btn-action-print').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var docType = btn.getAttribute('data-doc');
-        var docId = btn.getAttribute('data-id');
-        printArchive(docId, docType);
-      });
-    });
-    body.querySelectorAll('.btn-action-edit').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var docType = btn.getAttribute('data-doc');
-        var docId = btn.getAttribute('data-id');
-        editArchive(docId, docType);
-      });
-    });
-    body.querySelectorAll('.btn-action-delete').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var docType = btn.getAttribute('data-doc');
-        var docId = btn.getAttribute('data-id');
-        annulerArchive(docId, docType);
-      });
-    });
-  }
+    if (!supabase) return;
 
-  function printArchive(docId, docType) {
-    var arr = docType === 'reception' ? state.archives.receptions : state.archives.sorties;
-    var doc = arr.find(function (d) { return d.id == docId; });
-    if (!doc) return;
-    
-    var bonData = {
-        numero: doc.number,
-        date: doc.date,
-        fournisseur: doc.fournisseur,
-        bl: doc.bl,
-        transporteur: doc.transporteur,
-        chauffeur: doc.chauffeur,
-        matricule: doc.matricule,
-        client_type: doc.clientType,
-        client_id: doc.client_id,
-        client_nom: doc.clientNom,
-        total_caisses: doc.totalCaisses,
-        total_m2: doc.totalM2
-    };
-    var linesData = doc.lines.map(function(l) {
-        return { produit_id: l.refId, caisses: l.caisses, m2: l.m2 };
-    });
-    
-    setTimeout(() => {
-        generatePrintLayout(bonData, linesData, docType);
-        document.body.classList.add('printing-bon');
-        window.print();
-        document.body.classList.remove('printing-bon');
-    }, 100);
-  }
-
-  function editArchive(docId, docType) {
-    if (!confirm('Voulez-vous modifier cette archive ? Cela remplacera le brouillon actuel.')) return;
-    var arr = docType === 'reception' ? state.archives.receptions : state.archives.sorties;
-    var doc = arr.find(function (d) { return d.id == docId; });
-    if (!doc) return;
-    
-    if (docType === 'reception') {
-      brDraft.lines = doc.lines.map(l => ({ refId: l.refId, caisses: l.caisses, m2: l.m2 }));
-      saveBrDraft();
-      $('#br-date').value = doc.date;
-      $('#br-bl').value = doc.bl || '';
-      $('#br-fournisseur').value = doc.fournisseur || '';
-      $('#br-transporteur').value = doc.transporteur || '';
-      if ($('#br-matricule')) $('#br-matricule').value = doc.matricule || '';
-      renderBrLines();
-      $('.tab-nav button[data-target="reception"]').click();
-    } else {
-      bsDraft.lines = doc.lines.map(l => ({ refId: l.refId, caisses: l.caisses, m2: l.m2 }));
-      $('#bs-date').value = doc.date;
-      if (doc.clientType) {
-        let typeInputs = document.querySelectorAll('[name="bs-client-type"]');
-        typeInputs.forEach(r => r.checked = (r.value === doc.clientType));
-        if (doc.clientType === 'compte') {
-          $('#bs-client').value = doc.client_id || '';
-          $('#group-bs-client-compte').hidden = false;
-          $('#group-bs-client-divers').hidden = true;
-        } else {
-          $('#bs-client-divers-nom').value = doc.clientNom || '';
-          $('#group-bs-client-compte').hidden = true;
-          $('#group-bs-client-divers').hidden = false;
-        }
-      }
-      renderBsLines();
-      $('.tab-nav button[data-target="sortie"]').click();
-    }
-  }
-
-  async function annulerArchive(docId, docType) {
-    if (!confirm('Attention ! Voulez-vous vraiment annuler ce document ? Le stock sera mis à jour en conséquence.')) return;
     try {
-      var arr = docType === 'reception' ? state.archives.receptions : state.archives.sorties;
-      var doc = arr.find(function (d) { return d.id == docId; });
-      if (!doc) return;
-
-      if ((doc.number || '').includes('Annulé')) {
-        toast('Ce document est déjà annulé', 'warning');
-        return;
+      const { data, error } = await supabase.from('archives').select('*');
+      if (error) throw error;
+      
+      var items = data || [];
+      
+      if (type === 'receptions') {
+        items = items.filter(r => (r.record_type || '').toLowerCase().includes('reception') || (r.record_type || '').toLowerCase() === 'réception');
+      } else if (type === 'sorties') {
+        items = items.filter(r => (r.record_type || '').toLowerCase().includes('sortie'));
       }
       
-      const isReception = docType === 'reception';
-      const tableName = isReception ? 'bons_reception' : 'bons_sortie';
-      
-      // Update stock
-      for (const l of doc.lines) {
-        const ref = refById(l.refId);
-        if (ref) {
-          const changeM2 = isReception ? -l.m2 : l.m2;
-          const newStock = round2((ref.stockM2 || 0) + changeM2);
-          await supabase.from('produits').update({ stock_m2: newStock }).eq('id', l.refId);
-        }
-        await supabase.from('mouvements').insert({
-          date: today(),
-          type: isReception ? 'annulation_reception' : 'annulation_sortie',
-          reference_id: l.refId,
-          quantity_m2: isReception ? -l.m2 : l.m2,
-          document_ref: doc.number + ' (Annulé)'
+      if (search) {
+        items = items.filter(function (it) {
+          return ((it.record_number || '') + (it.tiers || '') + (it.record_date || '') + (it.record_type || '')).toLowerCase().indexOf(search) >= 0;
         });
       }
       
-      const newNumero = doc.number + ' (Annulé)';
-      await supabase.from(tableName).update({ numero: newNumero }).eq('id', docId);
+      items.sort(function (a, b) { 
+        var dateA = new Date(a.record_date || 0); 
+        var dateB = new Date(b.record_date || 0); 
+        return dateB - dateA; 
+      });
+
+      if (items.length === 0) {
+        body.innerHTML = '<tr><td colspan="7" class="empty-state">Aucune archive trouvée.</td></tr>';
+        return;
+      }
       
-      await loadState();
-      renderArchives();
-      if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
-      toast('Document annulé et stock restauré', 'success');
+      body.innerHTML = '';
+      items.forEach(function (row) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + (row.record_number || '—') + '</td>' +
+          '<td>' + (row.record_type || '—') + '</td>' +
+          '<td>' + (row.record_date || '—') + '</td>' +
+          '<td>' + (row.tiers || '—') + '</td>' +
+          '<td>' + (row.lignes || 0) + '</td>' +
+          '<td>' + round2(row.total_m2 || 0) + '</td>' +
+          '<td>' +
+          '<button class="btn-icon" onclick="editArchive(\'' + row.id + '\')" title="Modifier">✏️</button> ' +
+          '<button class="btn-icon" onclick="deleteArchive(\'' + row.id + '\')" title="Supprimer" style="color:var(--danger)">🗑️</button>' +
+          '</td>';
+        body.appendChild(tr);
+      });
     } catch (err) {
-      toast("Erreur durant l'annulation: " + err.message, 'error');
+      body.innerHTML = '<tr><td colspan="7" class="text-danger">Erreur: ' + err.message + '</td></tr>';
     }
   }
+
+  window.editArchive = async function(id) {
+    if (!confirm('Voulez-vous modifier cette archive ?')) return;
+    try {
+      const { data, error } = await supabase.from('archives').select('*').eq('id', id).single();
+      if (error) throw error;
+      alert('Édition de l\'archive N° ' + (data.record_number || id));
+    } catch (err) {
+      alert("Erreur: " + err.message);
+    }
+  };
+
+  window.deleteArchive = async function(id) {
+    if (!confirm('Êtes-vous sûr de vouloir supprimer cette archive ?')) return;
+
+    try {
+      const { error } = await supabase.from('archives').delete().eq('id', id);
+      if (error) throw error;
+      
+      toast('Archive supprimée', 'success');
+      renderArchives();
+    } catch (err) {
+      alert("Erreur durant la suppression: " + err.message);
+    }
+  };
 
   function initArchives() {
     $('#archives-search').addEventListener('input', renderArchives);
