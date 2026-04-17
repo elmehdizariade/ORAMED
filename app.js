@@ -110,13 +110,23 @@
   // ── Toast ──
   function toast(msg, type) {
     type = type || 'info';
+
+    // Core Principle: Remove any existing error toasts to prevent infinite stacking
+    if (type === 'error') {
+      document.querySelectorAll('.toast--error').forEach(function(existingEl) {
+        existingEl.remove();
+      });
+    }
+
     const el = document.createElement('div');
     el.className = 'toast toast--' + type;
     el.textContent = msg;
     $('#toast-container').appendChild(el);
     setTimeout(function () {
-      el.classList.add('toast--out');
-      setTimeout(function () { el.remove(); }, 300);
+      if (el && el.parentNode) {
+        el.classList.add('toast--out');
+        setTimeout(function () { if (el && el.parentNode) el.remove(); }, 300);
+      }
     }, 2800);
   }
 
@@ -721,8 +731,11 @@
       saveBrDraft();
     }
 
-    // Bind the function to the existing UI button
-    $('#br-add-line').addEventListener('click', ajouterLigne);
+    // Bind the function to the existing UI button (Clear existing to prevent stack bounds)
+    var btnAddLigne = $('#br-add-line');
+    var newBtnAddLigne = btnAddLigne.cloneNode(true);
+    btnAddLigne.parentNode.replaceChild(newBtnAddLigne, btnAddLigne);
+    newBtnAddLigne.addEventListener('click', ajouterLigne);
 
   function generatePrintLayout(bonData, linesData, docType='reception') {
     var section = $('#print-section');
@@ -867,13 +880,30 @@
       toast('Nouveau bon de réception', 'info'); 
     });
     // Valider
-    $('#br-valider').addEventListener('click', async function () {
-      if (brDraft.lines.length === 0) { toast('Ajoutez au moins une ligne', 'error'); return; }
+    var btnValider = $('#br-valider');
+    var newBtnValider = btnValider.cloneNode(true);
+    btnValider.parentNode.replaceChild(newBtnValider, btnValider);
+    
+    newBtnValider.addEventListener('click', async function () {
+      // 1. Align the Data Array: Check all possible state locations
+      let currentLines = [];
+      if (state.currentReception && state.currentReception.lines && state.currentReception.lines.length > 0) {
+          currentLines = state.currentReception.lines;
+      } else if (typeof brDraft !== 'undefined' && brDraft.lines && brDraft.lines.length > 0) {
+          currentLines = brDraft.lines;
+      }
+      
+      // 2. Emergency Failsafe DOM Check
+      const domRows = document.querySelectorAll('#br-lines-body tr:not(.empty-state)');
+      if (currentLines.length === 0 && domRows.length === 0) {
+          toast('Ajoutez au moins une ligne', 'error'); 
+          return; 
+      }
+
       if (!supabase) { toast('Supabase non configuré', 'error'); return; }
       
       var number = brNextNumber();
       var date = $('#br-date').value || today();
-      const lines = state.currentReception.lines.length > 0 ? state.currentReception.lines : brDraft.lines;
       
       var receptionData = {
         numero: number,
@@ -883,8 +913,8 @@
         transporteur: $('#br-transporteur').value,
         chauffeur: $('#br-chauffeur').style.display !== 'none' ? $('#br-chauffeur').value : $('#br-chauffeur-select').value,
         matricule: $('#br-matricule').value,
-        total_caisses: lines.reduce(function (s, l) { return s + l.caisses; }, 0),
-        total_m2: round2(lines.reduce(function (s, l) { return s + l.m2; }, 0)),
+        total_caisses: currentLines.reduce(function (s, l) { return s + (parseInt(l.caisses)||0); }, 0),
+        total_m2: round2(currentLines.reduce(function (s, l) { return s + (parseFloat(l.m2)||0); }, 0)),
         created_at: new Date().toISOString()
       };
 
@@ -892,25 +922,28 @@
         const { data: br, error: errBr } = await supabase.from('bons_reception').insert(receptionData).select().single();
         if(errBr || !br) throw new Error(errBr ? errBr.message : 'Error insertion BR');
 
-        const lignesToInsert = lines.map(l => ({
+        const lignesToInsert = currentLines.map(l => ({
           bon_id: br.id,
           produit_id: l.reference_id || l.refId,
           caisses: l.caisses,
           m2: l.m2
         }));
 
-        await supabase.from('bons_reception_lignes').insert(lignesToInsert);
+        if (lignesToInsert.length > 0) {
+            await supabase.from('bons_reception_lignes').insert(lignesToInsert);
+        }
 
-        for (const l of lines) {
-          const ref = refById(l.reference_id || l.refId);
+        for (const l of currentLines) {
+          const refId = l.reference_id || l.refId;
+          const ref = refById(refId);
           if (ref) {
             const newStockM2 = round2((ref.stockM2 || 0) + l.m2);
-            await supabase.from('produits').update({ stock_m2: newStockM2 }).eq('id', l.reference_id || l.refId);
+            await supabase.from('produits').update({ stock_m2: newStockM2 }).eq('id', refId);
           }
           await supabase.from('mouvements').insert({
             date: date,
             type: 'reception',
-            reference_id: l.reference_id || l.refId,
+            reference_id: refId,
             quantity_m2: l.m2,
             document_ref: br.numero || ('BR-' + br.id)
           });
@@ -918,25 +951,23 @@
 
         await loadState();
         localStorage.removeItem('draft_reception_lines');
-        state.currentReception.lines = [];
+        if (state.currentReception) state.currentReception.lines = [];
+        if (typeof brDraft !== 'undefined') brDraft.lines = [];
         brReset();
         toast('Réception validée : ' + (br.numero || 'BR-'+br.id), 'success');
         refreshDropdowns();
         if ($('#panel-stock').classList.contains('active')) renderStock($('#stock-search').value);
         
-        // TRIGGER PRINT SAFELY WITH TRY/CATCH
+        // 3. FORCE PRINT
+        generatePrintLayout(receptionData, lignesToInsert, 'reception');
         setTimeout(() => {
-          try {
-            generatePrintLayout(receptionData, lignesToInsert, 'reception');
             document.body.classList.add('printing-bon');
             window.print();
-          } catch (printErr) {
-            console.error('[ORAMED Print Error] Échec de la génération/impression Reception:', printErr);
-            alert('Erreur critique lors de la préparation de l\'impression: ' + printErr.message);
-          } finally {
-            document.body.classList.remove('printing-bon');
-          }
-        }, 100);
+            // Automatically unshield after the print dialog finishes or is cancelled
+            setTimeout(() => {
+                document.body.classList.remove('printing-bon');
+            }, 500);
+        }, 150);
 
       } catch (err) {
         console.error('[ORAMED State Error] Échec critique lors de la validation Réception:', err);
